@@ -1,0 +1,1771 @@
+---
+title: "Manuscript_Data_Analysis"
+author: "ZhongzhiSun"
+date: "2024-11-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = normalizePath("../data/Drugs_dataset"))
+```
+
+
+### Remove all Match between run (MBR) results from the MaxQuant search result
+```{r}
+# "Identification type" : "By MS/MS", "By matching"
+
+# "Intensity"
+
+library(dplyr)
+
+
+### Readin MaxQuant peptide identification result
+id_file <- "peptides.txt"
+id_result <- read.table(id_file, header = TRUE, sep = "\t")
+# Count the number of samples with non-zero intensity
+id_result <- id_result %>%
+  mutate(non_zero_counts = rowSums(across(starts_with("Intensity."), ~ . > 0)))
+summary(id_result$non_zero_counts)
+
+
+### Extract "Identification type" and "Intensity" columns for all individuals
+selected_id_result <- id_result %>% select(Sequence, starts_with("Identification.type"), starts_with("Intensity."))
+# Count the number of samples with non-zero intensity
+selected_id_result <- selected_id_result %>%
+  mutate(non_zero_counts = rowSums(across(starts_with("Intensity"), ~ . > 0)))
+summary(selected_id_result$non_zero_counts)
+
+
+
+### Replace the intensity of peptides identified by MBR with zero
+mbr_filtered_result <- selected_id_result %>%
+  mutate(
+    across(
+      .cols = contains("Intensity"),
+      .fns = ~ ifelse(
+        get(gsub("Intensity", "Identification.type", cur_column())) == "By matching",
+        0,
+        .
+      )
+    )
+  )
+
+# Count the number of samples with non-zero intensity
+mbr_filtered_result <- mbr_filtered_result %>%
+  mutate(non_zero_counts = rowSums(across(starts_with("Intensity"), ~ . > 0)))
+summary(mbr_filtered_result$non_zero_counts)
+
+### Output replacement result
+out_file <- "rm_mbr_peptides.txt"
+write.table(mbr_filtered_result, file = out_file, col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")
+```
+
+
+
+### Extract results of different individuals
+```{r}
+library(dplyr)
+
+
+## Define a function to read in peptide abundance data for samples in the sample_name_file
+readin_abundance <- function(sample_name_file, project_abundance_file) {
+  # Read in the peptide intensity data
+  project_abundance <- read.csv(project_abundance_file, sep = "\t", header = TRUE)
+  
+  # Read sample names and convert them into column names for intensity
+  sample_name <- read.csv(sample_name_file, sep = "\t", header = TRUE)
+  colnames(sample_name) <- c("Sample")
+  sample_name$Sample <- paste0("Intensity.", sample_name$Sample)
+  
+  # Select columns of the peptide ID and peptide intensity
+  project_abundance <- project_abundance %>% 
+    select(Sequence, sample_name$Sample)
+  return(project_abundance)
+}
+
+## Define a function to filter specific samples (from specific individuals)
+select_sample <- function(data_frame,pattern) {
+  pattern <- paste0(pattern,"_")
+  selected_data <- data_frame %>% select(Sequence, contains(pattern))
+  return(selected_data)
+}
+
+rm_all_zero_values <- function(data_frame, intensity_start_column){
+  filtered_data_frame <- data_frame %>% filter(rowSums(select(.,(intensity_start_column:ncol(.)))) > 0)
+  return(filtered_data_frame)
+}
+
+
+
+###### Main function
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+
+# Set output dir
+output_dir  <- "rm_mbr_individual_pep_quant"
+# Check the existence of the output dir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("Output dir created:", output_dir , "\n")
+} else {
+  cat("Output dir existed:", output_dir , "\n")
+}
+
+# Read in the sample name file
+sample_name_file <- "Drugs_LFQ_selected_samples.txt"
+
+# Read in abundance file
+project_abundance_file <- "rm_mbr_peptides.txt"
+project_abundance <- readin_abundance(sample_name_file,project_abundance_file)
+
+
+for (individual in individuals){
+  print(individual)
+  selected_project_abundance <- select_sample(project_abundance, individual)
+  print(nrow(selected_project_abundance))
+  rm_all_zero_selected_project_abundance <- rm_all_zero_values(selected_project_abundance, 2)
+  print(nrow(rm_all_zero_selected_project_abundance))
+  outfile_name <- paste0(individual, "_rm_mbr_quantified_peptides.out")
+  outfile <- file.path(output_dir, outfile_name)
+  write.table(rm_all_zero_selected_project_abundance, outfile, col.names = TRUE, row.names = FALSE, quote = FALSE, sep = "\t")
+}
+```
+
+
+
+### Filtering the peptide abundance at different sparsity thresholds
+```{r}
+library(dplyr)
+library(ggplot2)
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_quant/")
+
+
+### Sta the number of peptides at different sparsity filters
+## Define a function to filter peptide that have non-zero abundance in more than threshold of total samples
+sparsity_filter <- function(data_frame,sparsity_threshold,non_sample_column){
+  # Calculate the number of samples (subtracting the first two columns)
+  num_samples <- ncol(data_frame) - non_sample_column
+
+  # Calculate the count of non-zero abundance in each row
+  non_zero_counts <- rowSums(data_frame[, (non_sample_column + 1):ncol(data_frame)] > 0)
+  
+  # Filter rows based on the sparsity threshold
+  filtered_data <- data_frame %>%
+    filter(non_zero_counts >= num_samples * sparsity_threshold)
+    
+  return(filtered_data)
+}
+
+## Sta the number of peptides at different sparsity filters for different individuals
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# Number of peptides at a specific threshold for different individuals
+sparsity_filters <- c(0.005, 0.01, 0.02, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1)
+# Initialize a dataframe for sta
+sparsity_sta <- data.frame(Individual = character(), Sparsity = numeric(), Pep_number = integer(), stringsAsFactors = FALSE)
+for (individual in individuals){
+  print(individual)
+  abundance_file <- paste0(individual, "_rm_mbr_quantified_peptides.out")
+  selected_project_abundance <- read.table(abundance_file, sep = "\t", header = TRUE)
+  
+  for (filter in sparsity_filters){
+    filtered_project_abundance <- sparsity_filter(selected_project_abundance, sparsity_threshold = filter, non_sample_column = 1)
+    pep_num <- nrow(filtered_project_abundance)
+    print(paste(filter,pep_num))
+    sparsity_sta <- rbind(sparsity_sta, data.frame(Individual = individual, Sparsity = filter, Pep_number = pep_num))
+  }
+}
+
+output_file <- "sparsity_sta.txt"
+write.table(sparsity_sta, file = output_file, row.names = FALSE, col.names = TRUE, sep = "\t", quote = FALSE)
+
+
+### Generate sta figure
+sparsity_data <- read.table("sparsity_sta.txt", header=TRUE, sep = "\t")
+head(sparsity_data)
+
+myplot <- ggplot(sparsity_data,mapping=aes(x=as.factor(Sparsity),y=Pep_number))+geom_boxplot()+labs(x="Sparsity filter",y="Number of identified peptides") + geom_line(aes(group = Individual), color = "grey", alpha = 0.8) + geom_point(aes(color = Individual)) + theme_bw()
+
+figure_name <- "Peptide_Sparsity_Filter.tiff"
+ggsave(figure_name,myplot, width = 8, height = 6, units = "in", dev = "tiff")
+
+
+
+
+
+
+
+### Out put quantified peptides that passed specific sparsity_threshold
+sparsity_threshold <- 0.2
+non_sample_column <- 1
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+
+for (individual in individuals){
+  file <- paste0(individual, "_rm_mbr_quantified_peptides.out")
+  
+  data_frame <- read.table(file, sep = "\t", header = TRUE)
+  
+  # Calculate the number of samples (subtracting the first two columns)
+  num_samples <- ncol(data_frame) - non_sample_column
+
+  # Calculate the count of non-zero abundance in each row
+  non_zero_counts <- rowSums(data_frame[, (non_sample_column + 1):ncol(data_frame)] > 0)
+  
+  # Filter rows based on the sparsity threshold
+  filtered_data_frame <- data_frame %>%
+    filter(non_zero_counts >= num_samples * sparsity_threshold)
+    
+  
+  filtered_file <- paste0("sparsity_", as.character(sparsity_threshold),"_", individual, "_rm_mbr_shared_quantified_peptides.out")
+  print(filtered_file)
+  
+  write.table(filtered_data_frame, filtered_file, sep = "\t", row.names=FALSE, quote = FALSE)
+}
+
+
+```
+
+
+
+### Calculate Log2 fold change FC of different individuals
+```{r}
+# Load necessary libraries
+library(reshape2)
+library(dplyr)
+
+
+## Define a function to filter peptide that have non-zero abundance in more than threshold of total samples
+sparsity_filter <- function(data_frame,sparsity_threshold,non_sample_column){
+  # Calculate the number of samples (subtracting the first two columns)
+  num_samples <- ncol(data_frame) - non_sample_column
+  #print(ncol(data_frame))
+  #print(num_samples)
+
+  # Calculate the count of non-zero abundance in each row
+  non_zero_counts <- rowSums(data_frame[, (non_sample_column + 1):ncol(data_frame)] > 0)
+  #print(max(non_zero_counts))
+  #print(num_samples * sparsity_threshold)
+  
+  # Filter rows based on the sparsity threshold
+  filtered_data <- data_frame %>%
+    filter(non_zero_counts >= num_samples * sparsity_threshold)
+  
+  return(filtered_data)
+}
+
+
+## Define a function to filter high-abundance peptides
+abundance_filter <- function(data_frame, top_n_abundance, non_sample_column){
+  # Add a new column to calculate total abundance of peptides from all samples
+  data_frame$total_abundance <- apply(data_frame[,(non_sample_column + 1):ncol(data_frame)], 1, sum, na.rm = TRUE)
+  # Calculate top-n percent row numbers
+  top_n_percent_rows <- ceiling(top_n_abundance * nrow(data_frame))
+  # Only keep peptides with top-n percent total abundance
+  top_df <- data_frame %>% arrange(desc(total_abundance)) %>% slice_max(order_by = total_abundance, n = top_n_percent_rows)
+  top_df <- top_df %>% select(-total_abundance)
+  
+  return(top_df)
+}
+
+
+## Define a function to convert the wide table to a long table
+table_convert <- function(wide_table){
+  # Converting the wide table to a long table
+  long_table <- melt(wide_table, id.vars = c("Sequence"), variable.name = "Sample", value.name = "Intensity")
+  return(long_table)
+}
+
+
+## Define a function to calculate abundance change against control sample (average value of all control groups) and output into wide table
+calculate_fold_change <- function(abundance_data,control_ID){
+  # To avoid zero value, add 1 to all abundance
+  abundance_data$Intensity <- as.numeric(abundance_data$Intensity) + 1
+  nrow(abundance_data)
+  head(abundance_data)
+  
+  ## Calculate Fold change
+  # Get the abundance info of control groups
+  control_ID_pattern <- paste(control_ID, collapse="|")
+  control_abundance_data <- abundance_data %>%
+    filter(grepl(control_ID_pattern, Sample))
+  nrow(control_abundance_data)
+  head(control_abundance_data)
+  
+  # Create a named vector of mean abundances of control groups for efficient lookup
+  # control_abundances <- setNames(control_abundance_data$Intensity, control_abundance_data$Sequence)
+  control_abundances <- control_abundance_data %>%
+  group_by(Sequence) %>%
+  summarise(Control_Intensity = mean(Intensity, na.rm = TRUE)) %>%
+  ungroup()
+  print(head(control_abundances))
+  
+  control_abundances <- setNames(control_abundances$Control_Intensity, control_abundances$Sequence)
+  print(head(control_abundances))
+  
+  # nrow(control_abundance_data)
+  # head(control_abundance_data)
+  
+  # Calculate fold change for each row (vectorized operation)
+  abundance_data <- abundance_data %>%
+  mutate(log2_fold_change = log2(Intensity / control_abundances[as.character(Sequence)]))
+  
+  return(abundance_data)
+}
+
+
+## Define a function to output calculated abundance fold change data.
+output_fold_change_data <- function(abundance_data, output_dir, individual, fold_change_threshold){
+  # Output fold change calculation results into long table
+  #output_file <- paste0(output_dir,individual, "_fold_change.out")
+  output_file_name <- paste0(individual, "_fold_change.out")
+  output_file <- file.path(output_dir, output_file_name)
+  
+  print(output_file)
+  write.table(abundance_data, output_file,quote = FALSE, row.names = FALSE)
+  
+  # Output fold change calculation results into wide table (matrix)
+  wide_data <- dcast(abundance_data, Sequence ~ Sample, value.var = "log2_fold_change")
+  # wide_output_file <- paste0(output_dir,individual, "_fold_change_wide.out")
+  wide_output_file_name <- paste0(individual, "_fold_change_wide.out")
+  wide_output_file <- file.path(output_dir,wide_output_file_name)
+  print(wide_output_file)
+  write.table(wide_data, wide_output_file,quote = FALSE, row.names = FALSE)
+  
+  # Filter fold-change data
+  abundance_data <- abundance_data %>%
+    filter(log2_fold_change <= fold_change_threshold, log2_fold_change >= -fold_change_threshold)
+
+  # Output filtered fold change calculation results into long table
+  # output_file <- paste0(output_dir,"filtered_",individual, "_fold_change.out")
+  output_file_name <- paste0("filtered_",individual, "_fold_change.out")
+  output_file <- file.path(output_dir,output_file_name)
+  print(output_file)
+  write.table(abundance_data, output_file,quote = FALSE, row.names = FALSE)
+
+  # Output filtered fold change calculation results into wide table (matrix)
+  wide_data <- dcast(abundance_data, Sequence ~ Sample, value.var = "log2_fold_change")
+  #wide_output_file <- paste0(output_dir, "filtered_",individual, "_fold_change_wide.out")
+  wide_output_file_name <- paste0("filtered_",individual, "_fold_change_wide.out")
+  wide_output_file <- file.path(output_dir, wide_output_file_name)
+  print(wide_output_file)
+  write.table(wide_data, wide_output_file,quote = FALSE, row.names = FALSE)
+}
+
+
+
+### Main Function: Calculate peptide abundance fold change between treatments and the DMSO control of different individuals
+setwd("../data/Drugs_dataset/")
+
+# Output file paths
+input_dir <- "rm_mbr_individual_pep_quant"
+
+# Set output dir
+output_dir  <- "rm_mbr_individual_pep_log2_fc"
+# Check the existence of the output dir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("Output dir created:", output_dir , "\n")
+} else {
+  cat("Output dir existed:", output_dir , "\n")
+}
+
+# Control groups
+control_ID <- c("P4D3", "P4D10")
+
+# List of individuals
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+
+## Calculating fold changes of different individuals
+#individual <- "V20"
+for (individual in individuals){
+  # Read in peptide abundance file
+  data_file_name <- paste0("sparsity_0.2_", individual, "_rm_mbr_shared_quantified_peptides.out")
+  data_file <- file.path(input_dir, data_file_name)
+  project_abundance <- read.table(data_file, header = TRUE, sep = "\t")
+  print(nrow(project_abundance))
+  selected_project_abundance <- project_abundance
+ 
+  # Filter peptides(rows) that have non-zero abundance in more than 10% of selected samples
+  filtered_project_abundance <- selected_project_abundance
+  print(nrow(filtered_project_abundance))
+  
+  # # Filtering top abundances peptides (All peptide/top 50%/top 10%)
+  # filtered_project_abundance <- abundance_filter(filtered_project_abundance, top_n_abundance = 1, non_sample_column = 1)
+  # nrow(filtered_project_abundance)
+  
+  # Convert abundance data into long table
+  project_abundance_long_table <- table_convert(filtered_project_abundance)
+  head(project_abundance_long_table)
+  
+  # Calculate fold change
+  fold_change_data <- calculate_fold_change(project_abundance_long_table, control_ID)
+  
+  # Output fold change calculation results
+  output_fold_change_data(fold_change_data, output_dir, individual, fold_change_threshold = 10)
+}
+```
+
+
+
+### Calculate SCC of calculated FC
+```{r}
+#setwd("../data/Drugs_dataset/")
+setwd("D:/Zhongzhi/202402_Peptide_Coregulation_Project/data/Drugs_dataset/")
+
+# Load necessary libraries
+library(reshape2)
+library(dplyr)
+library(data.table)
+library(ggplot2)
+library(tibble)
+library(data.table); library(reshape2); library(ggplot2); library(treeClust)
+#library(WGCNA)
+
+
+### Main function
+# Different types of correlation coefficients
+# PCC: Pearson correlation coefficient
+# SCC: Spearman correlation coefficient
+# cc_types <- c("PCC","SCC")
+
+# Input file path
+input_dir <- "rm_mbr_individual_pep_log2_fc"
+
+# Set output path/dir
+output_dir  <- "rm_mbr_individual_pep_scc"
+# Check the existence of the output dir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("Output dir created:", output_dir , "\n")
+} else {
+  cat("Output dir existed:", output_dir , "\n")
+}
+
+
+# List of individuals
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# Calculate correlation coefficients of fold changes of peptide pairs and output results
+individual <- "V45"
+method = "spearman"
+cc_type <- "SCC"
+for (individual in individuals){
+  print(individual)
+  each_data_name <- paste0(individual, "_fold_change_wide.out")
+  each_data <- file.path(input_dir, each_data_name)
+  print(each_data)
+  
+  fold_change_data <- fread(each_data)
+  fold_change_data <- data.frame(fold_change_data , row.names = 1)
+  head(fold_change_data)
+  nrow(fold_change_data)
+  ncol(fold_change_data)
+  cat("Total rows in the dataset:", nrow(fold_change_data), "\n")
+  
+  
+  ### Single core calculation and sta the calculation time
+  t_data <- t(fold_change_data)
+  head(t_data)
+  head(colnames(t_data))
+  head(rownames(t_data))
+
+  cat("Calculating SCC.")
+  correlation_matrix <- cor(t_data, method = method, use = "pairwise.complete.obs")
+  
+  nrow(correlation_matrix)
+  head(colnames(correlation_matrix))
+  ncol(correlation_matrix)
+  head(rownames(correlation_matrix))
+  
+  wide_correlation_results <- as.matrix(correlation_matrix)
+  head(colnames(wide_correlation_results))
+  ncol(wide_correlation_results)
+  head(rownames(wide_correlation_results))
+  nrow(wide_correlation_results)
+  
+  
+  ### Output correlation coefficients calculation results into wide table
+  wide_outfile_name <- paste0(each_data_name, "_", cc_type, "_correlation.wide.out")
+  wide_outfile <- file.path(output_dir, wide_outfile_name)
+  write.table(wide_correlation_results, wide_outfile, row.names = TRUE, col.names = TRUE, quote=FALSE,sep="\t")
+  
+  
+    
+  ### Output correlation coefficients calculation results into long table
+  # Define the outfile name
+  outfile_name <- paste0(each_data_name, "_", cc_type, "_correlation.out")
+  outfile <- file.path(output_dir, outfile_name)
+  # Covert calculated matrix into long tables
+  SCCs <- as.data.table(melt(as.matrix(correlation_matrix)))  # Convert to a long data table
+  SCCs <- SCCs[, .(Peptide_1 = as.character(Var1),  # Change colnames and types
+               Peptide_2 = as.character(Var2),
+               SCC = value)]
+  SCCs <- SCCs[Peptide_1 > Peptide_2]  # Remove self-comparisons and duplicate pairs
+  head(SCCs)
+  cat("Total rows in Spearman's correlation results:", nrow(SCCs), "\n")
+  # Output correlation coefficients calculation results into long table
+  write.table(SCCs, outfile, row.names = FALSE,quote=FALSE,sep="\t")
+}
+
+```
+
+
+
+### Calculate SCC of calculated FC and output p-values
+```{r}
+#setwd("../data/Drugs_dataset/")
+
+# Load necessary libraries
+library(reshape2)
+library(dplyr)
+library(data.table)
+library(ggplot2)
+library(tibble)
+library(data.table); library(reshape2); library(ggplot2); library(treeClust)
+#library(WGCNA)
+
+
+### Main function
+# Different types of correlation coefficients
+# PCC: Pearson correlation coefficient
+# SCC: Spearman correlation coefficient
+# cc_types <- c("PCC","SCC")
+
+# Input file path
+input_dir <- "rm_mbr_individual_pep_log2_fc"
+
+# Set output path/dir
+output_dir  <- "rm_mbr_individual_pep_scc"
+# Check the existence of the output dir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("Output dir created:", output_dir , "\n")
+} else {
+  cat("Output dir existed:", output_dir , "\n")
+}
+
+
+# List of individuals
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# Calculate correlation coefficients of fold changes of peptide pairs and output results
+individual <- "V45"
+method = "spearman"
+cc_type <- "SCC"
+# Main loop for each individual
+for (individual in individuals){
+  print(individual)
+  each_data_name <- paste0(individual, "_fold_change_wide.out")
+  each_data <- file.path(input_dir, each_data_name)
+  print(each_data)
+  
+  fold_change_data <- fread(each_data)
+  fold_change_data <- data.frame(fold_change_data , row.names = 1)
+  cat("Total rows in the dataset:", nrow(fold_change_data), "\n")
+  
+  # Transpose the data for correlation analysis
+  t_data <- t(fold_change_data)
+  
+  # Initialize a data table to store the results
+  SCCs_pvalues <- data.table(Peptide_1 = character(), Peptide_2 = character(), SCC = numeric(), p_value = numeric())
+  
+  # Iterate through all pairs of peptides and calculate SCC and p-values
+  peptides <- colnames(t_data)
+  for (i in 1:(length(peptides)-1)) {
+    for (j in (i+1):length(peptides)) {
+      peptide_1 <- peptides[i]
+      peptide_2 <- peptides[j]
+      
+      # Perform Spearman correlation test to get both SCC and p-value
+      test_result <- cor.test(t_data[, peptide_1], t_data[, peptide_2], method = "spearman", use = "pairwise.complete.obs")
+      
+      # Append the results to the data table
+      SCCs_pvalues <- rbind(SCCs_pvalues, data.table(Peptide_1 = peptide_1, Peptide_2 = peptide_2, SCC = test_result$estimate, p_value = test_result$p.value))
+    }
+  }
+  
+  # Output correlation coefficients and p-values into long table
+  outfile_name <- paste0(each_data_name, "_SCC_correlation_with_pvalue.out")
+  outfile <- file.path(output_dir, outfile_name)
+  write.table(SCCs_pvalues, outfile, row.names = FALSE, quote=FALSE, sep="\t")
+  
+  cat("Finished calculation for", individual, "\n")
+}
+
+```
+
+
+
+### Refine peptide taxonomic sources
+```{r}
+library(tidyr)
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine")
+
+
+### Run bash script to extract peptide sequences
+#bash select_peptide_bash.sh
+
+### Run bash script to extract protein sources (based on 4744 genomes) of 
+### extracted peptide seuqneces
+#bash select_peptide_prot_source.sh
+
+
+###### Get refined genome list based on extracted peptide sequences
+### Read in peptide taxa annotations
+taxa_data_path <- "../data/raw/MetaPep_data"
+pep_tax_anno_file_name <- "MetaPep_pep_tax_anno.out"
+pep_tax_anno_file <- file.path(taxa_data_path, pep_tax_anno_file_name)
+pep_taxa_anno <- read.table(pep_tax_anno_file, sep = "\t", header = TRUE)
+head(pep_taxa_anno)
+
+### Set peptide number threshold
+# genome_threshold <- 0
+# genome_threshold <- 1
+genome_threshold <- 2
+# genome_threshold <- 3
+# genome_threshold <- 4
+# genome_threshold <- 5
+# genome_threshold <- 10
+# genome_threshold <- 20
+
+### Output a list of genomes which have a gteq number of genome-distinct peptides from each individual 
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+for (individual in individuals){
+  # Read in quantified peptide list
+  pep_list_file <- paste0(individual, "_rm_mbr_quantified_peptides_list.out")
+  pep_list_data <- read.table(pep_list_file, header = FALSE)
+  colnames(pep_list_data) <- "Peptide"
+  
+  # Attaching peptide taxa annotation to the quantified peptide list
+  pep_list_anno_data <- pep_list_data %>% left_join(pep_taxa_anno, by = "Peptide")
+  nrow(pep_list_anno_data)
+  table(pep_list_anno_data$Genome)
+  pep_list_anno_data <- pep_list_anno_data %>% filter(Genome != "-") %>% filter(!is.na(Genome))
+  table(pep_list_anno_data$Genome)
+  nrow(pep_list_anno_data)
+  head(pep_list_anno_data)
+  
+  # Sta the number of peptides from each genome
+  genome_sta <- as.data.frame(table(pep_list_anno_data$Genome))
+  head(genome_sta)
+  
+  # Output a list of genomes which have gteq number of peptides 
+  filtered_genome_sta <- genome_sta %>% filter(Freq >= genome_threshold)
+  print(nrow(filtered_genome_sta))
+  filtered_genome <- filtered_genome_sta$Var1
+  genome_sta_file <- paste0(individual, "_all_samp_pep_", as.character(genome_threshold), "_genome_list.txt")  
+  write.table(filtered_genome, genome_sta_file , quote=FALSE, col.names = FALSE, row.names = FALSE)  
+}
+
+
+
+###### Refine peptide protein sources based on the refined genome list
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+for (individual in individuals){
+  print(individual)
+  ### Get a list of genomes which exist in the sample
+  genome_list_file <- paste0(individual, "_all_samp_pep_", as.character(genome_threshold), "_genome_list.txt")
+  genome_list_data <- read.table(genome_list_file, header = FALSE)
+  genome_list <- genome_list_data %>% select(V1) %>% pull()
+  genome_list
+  
+  ### Read in protein sources annotation of peptides based on the entire UHGG
+  pep_prot_source_file <- paste0(individual, "_rm_mbr_quantified_peptides_list.out.prot_source.out")
+  
+  # Name the output file
+  pep_refined_prot_source_file <- paste0(pep_prot_source_file, ".refined.out")
+  # Read in original peptide protein annotation file
+  pep_prot_anno <- read.table(pep_prot_source_file, header = FALSE, sep = "\t")
+  colnames(pep_prot_anno) <- c("Peptide", "Protein_Source")
+  head(pep_prot_anno)
+  
+  
+  ### Refine the protein sources anno of peptides by only keeping protein from the target genome 
+  separated_pep_prot_anno <- pep_prot_anno %>%
+    separate_rows(Protein_Source, sep = "\\|")
+  target_genome <- genome_list
+  target_genome_pattern <- paste(target_genome, collapse = "|")
+  
+  filtered_pep_prot_anno <- separated_pep_prot_anno %>%
+    filter(grepl(target_genome_pattern, Protein_Source))
+  
+  refined_pep_prot_anno <- filtered_pep_prot_anno %>%
+    group_by(Peptide) %>%
+    summarise(Protein_Source = paste(Protein_Source, collapse = "|")) %>%
+    ungroup()
+  
+  head(refined_pep_prot_anno)
+  table(refined_pep_prot_anno$Protein_Source)
+  
+  print(pep_refined_prot_source_file)
+    
+  # Output refine results
+  write.table(refined_pep_prot_anno, pep_refined_prot_source_file, row.names = FALSE, quote = FALSE, sep = "\t")
+}
+
+
+
+### Generated refined peptide taxonomic annotations
+# bash get_peptide_tax_source.sh
+
+### Generated reformatted refined peptide taxonomic annotations
+# bash get_peptide_reformat_tax_source.sh
+
+
+
+
+###### Generate final peptide protein and taxa annotation file
+library(dplyr)
+
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+for (individual in individuals){
+  # Read in peptide refined protein source file 
+  refined_pep_prot_anno_file <- paste0(individual, "_rm_mbr_quantified_peptides_list.out.prot_source.out.refined.out")
+  refined_pep_prot_anno <- read.table(refined_pep_prot_anno_file, sep = "\t", header = TRUE)
+  
+  # Read in refined peptide tax source file
+  refined_pep_taxa_anno_file <-  paste0(individual, "_rm_mbr_quantified_peptides_list.out.prot_source.out.refined.out.tax_source.out.format_tax.out")
+  refined_pep_taxa_anno <- read.table(refined_pep_taxa_anno_file, sep = "\t", header = TRUE)
+  
+  # Readin genome taxa annotation file
+  genome_tax_anno_file <- "../data/raw/MetaPep_data/genome_taxonomy.out"
+  genome_tax_anno <- read.table(genome_tax_anno_file, sep = "\t", header = FALSE)
+  colnames(genome_tax_anno) <- c("Genome", "Combined_Tax")
+  head(genome_tax_anno)
+  genome_tax_anno$Species <- ifelse(grepl(";s__[^;\n]+", genome_tax_anno$Combined_Tax),
+                                    sub(".*;s__([^;\n]+).*", "\\1", genome_tax_anno$Combined_Tax),
+                                    "-")
+  head(genome_tax_anno$Species)
+  genome_tax_anno <- genome_tax_anno %>% select("Genome", "Species")
+  head(genome_tax_anno)
+  
+  
+  # Attach refined peptide protein source file and tax source file
+  combined_anno <- dplyr::left_join(refined_pep_prot_anno, refined_pep_taxa_anno, by = "Peptide")
+  head(combined_anno)
+  
+  # Modify genome-level annotation in the attached file
+  update_combined_anno <- combined_anno
+  rows_to_modify <- update_combined_anno $Number.of.shared.genomes == 1
+  update_combined_anno$Annotated.taxonomy.level[rows_to_modify] <- "Genome"
+  update_combined_anno$Genome[rows_to_modify] <- sub("^(MGYG[^_]*).*", "\\1", update_combined_anno$Protein_Source[rows_to_modify])
+  
+  head(update_combined_anno)
+  
+  # Update species-level annotation in the attached file
+  update_combined_anno <- update_combined_anno %>% select(-"Species")
+  update_combined_anno <- left_join(update_combined_anno, genome_tax_anno, by = "Genome")
+  update_combined_anno <- update_combined_anno %>%
+    mutate(Species = replace_na(Species, "-"))
+  head(update_combined_anno)
+  
+  
+  output_file <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  write.table(update_combined_anno, output_file, col.names = TRUE, row.names = FALSE, sep = "\t", quote = FALSE)
+}
+
+
+```
+
+
+
+### Sta the number of genomes left with different thresholds of genome-distinct peptides
+```{r}
+library(tidyr)
+library(ggplot2)
+library(ggsci)
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine")
+
+######
+### Read in peptide taxa annotations
+taxa_data_path <- "../data/raw/MetaPep_data"
+pep_tax_anno_file_name <- "MetaPep_pep_tax_anno.out"
+pep_tax_anno_file <- file.path(taxa_data_path, pep_tax_anno_file_name)
+pep_taxa_anno <- read.table(pep_tax_anno_file, sep = "\t", header = TRUE)
+head(pep_taxa_anno)
+
+
+
+genome_thresholds <- c(1,2,3,4,5,10,20)
+
+genome_sta_results <- data.frame(Individual = as.character(), Threshold = as.character(), Genomes = as.numeric())
+
+
+### Output a list of genomes which have a gteq number of genome-distinct peptides from each individual
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+for (individual in individuals){
+  for (genome_threshold in genome_thresholds){
+    # Read in quantified peptide list
+    pep_list_file <- paste0(individual, "_rm_mbr_quantified_peptides_list.out")
+    pep_list_data <- read.table(pep_list_file, header = FALSE)
+    colnames(pep_list_data) <- "Peptide"
+    
+    # Attaching peptide taxa annotation to the quantified peptide list
+    pep_list_anno_data <- pep_list_data %>% left_join(pep_taxa_anno, by = "Peptide")
+    nrow(pep_list_anno_data)
+    table(pep_list_anno_data$Genome)
+    pep_list_anno_data <- pep_list_anno_data %>% filter(Genome != "-") %>% filter(!is.na(Genome))
+    table(pep_list_anno_data$Genome)
+    nrow(pep_list_anno_data)
+    head(pep_list_anno_data)
+    
+    # Sta the number of peptides from each genome
+    genome_sta <- as.data.frame(table(pep_list_anno_data$Genome))
+    head(genome_sta)
+    
+    # Output a list of genomes which have gteq number of peptides 
+    filtered_genome_sta <- genome_sta %>% filter(Freq >= genome_threshold)
+    print(nrow(filtered_genome_sta))
+    genome_number <- nrow(filtered_genome_sta)
+    
+    # Saving sta results
+    genome_sta <- data.frame(Individual = as.character(individual), Threshold = as.character(genome_threshold), Genomes = as.numeric(genome_number))
+    genome_sta_results <- rbind(genome_sta_results, genome_sta)    
+  }
+}
+
+
+
+### Boxplot
+genome_sta_results$Threshold <-  factor(genome_sta_results$Threshold, levels = c(1,2,3,4,5,10,20))
+myplot <- ggplot(genome_sta_results, aes(x = Threshold, y = Genomes)) + geom_boxplot(outlier.shape = NA) + 
+  geom_jitter(aes(color = Individual), position = position_jitter(width = 0), size = 2) + 
+  geom_line(aes(group = Individual, color = Individual)) + theme_bw() + scale_color_d3() + 
+  labs(x = "Genome-distinct peptides threshold", y = "Number of Genomes") +
+  theme(axis.title.x = element_text(size = 14, color = "black"),
+        axis.title.y = element_text(size = 14, color = "black"),
+        axis.text.x = element_text(size = 12, color = "black"),
+        axis.text.y = element_text(size = 12, color = "black"), 
+        legend.title = element_text(size = 14, color = "black"),
+        legend.text = element_text(size = 12, color = "black"))
+
+#figure_name <- "Genome_Refine_Sta.tiff"
+```
+
+
+
+### Compare the SCC of peptides from the same or different protein/taxa sources
+```{r}
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(data.table)
+
+setwd("../data/Drugs_dataset/")
+
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+#individual <- "V45"
+#individuals <- c("V47", "V48", "V49", "V52")
+
+### Comparing of peptides from the same or different proteins
+for (individual in individuals){
+  print(individual)
+  ### Read in peptide protein source file
+  pep_prot_source_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_prot_source_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_prot_source_file_name)
+  pep_prot_source <- read.table(pep_prot_source_file, header = TRUE, sep = "\t")
+  pep_prot_source <- pep_prot_source %>% select(Peptide, Protein_Source)
+  colnames(pep_prot_source) <- c("Peptide", "Protein_Source")
+  head(pep_prot_source)
+  # Sta the number of proteins sharing the peptide
+  pep_prot_source$Protein_Count <- str_count(pep_prot_source$Protein_Source, "\\|") + 1
+  head(pep_prot_source$Protein_Count)
+  
+  
+  ### Read in calculated SCC file
+  scc_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+  scc_file <- file.path("rm_mbr_individual_pep_scc", scc_file_name)
+  org_matrix_long_table <- fread(scc_file, sep = "\t")
+  
+  
+  ### Comparing peptide pairs with both peptides only have one parent protein
+  # Attaching number of parent proteins to peptide sequences 
+  #Peptide_1
+  matrix_long_table <- org_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Count), by = c("Peptide_1" = "Peptide")) %>%
+    rename(Peptide_1_Protein_Count = Protein_Count)
+  #Peptide_2
+  matrix_long_table <- matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Count), by = c("Peptide_2" = "Peptide")) %>%
+    rename(Peptide_2_Protein_Count = Protein_Count)
+  head(matrix_long_table)
+  nrow(matrix_long_table)
+  
+  # ### Without filtering number of parent proteins
+  # filtered_matrix_long_table <- matrix_long_table
+  
+  ## Filtering number of parent proteins
+  # Filtered pairs of unique peptides (Both peptides only have one parent protein)
+  filtered_matrix_long_table <- matrix_long_table %>% filter(Peptide_1_Protein_Count == 1 & Peptide_2_Protein_Count == 1)
+  nrow(filtered_matrix_long_table)
+  
+  # Attaching parent protein to the peptide in peptide pairs
+  #Peptide_1
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Source), by = c("Peptide_1" = "Peptide")) %>%
+    rename(Peptide_1_Protein_Source = Protein_Source)
+  #Peptide_2
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Source), by = c("Peptide_2" = "Peptide"))%>%
+    rename(Peptide_2_Protein_Source = Protein_Source)
+  
+  # Remove peptides without protein sources
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+  filter(!is.na(Peptide_1_Protein_Source) & !is.na(Peptide_2_Protein_Source))
+  head(filtered_matrix_long_table)
+  
+  # Add a column to check peptide pairs protein source status (same protein/different proteins)
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    mutate(Protein_Source_Status = if_else(Peptide_1_Protein_Source == Peptide_2_Protein_Source, 
+                                           "Same protein", 
+                                           "Different proteins"))
+  head(filtered_matrix_long_table)
+  # Output the number of each group
+  print(table(filtered_matrix_long_table$Protein_Source_Status))
+  counts <- as.data.frame(table(filtered_matrix_long_table$Protein_Source_Status))
+  names(counts) <- c("Protein_Source_Status", "n")
+  counts$n_formatted <- format(counts$n, big.mark = ",", scientific = FALSE)
+  
+  
+  figure_file_name <- paste0(individual,"_all_protein_source_SCC_compare.tiff")
+  #figure_file_name <- paste0(individual,"_single_protein_source_SCC_compare.tiff")
+  
+  
+  figure_file <- file.path("figures", figure_file_name)
+  #figure_name <- paste0(individual,"_protein_group_source_SCC_compare")
+  
+  # Boxplot
+  myplot <- ggplot(filtered_matrix_long_table, aes(x = Protein_Source_Status, y = SCC)) +
+    geom_violin(aes(fill = Protein_Source_Status)) + ylim(-1,1) + 
+    geom_boxplot(width = 0.2, fill = "white") +
+    labs(title = paste0(individual),
+         x = "Peptide Pairs Protein Source Status",
+         y = "SCC", fill = "Protein Source Status") +
+    theme_bw() + theme(plot.title = element_text(hjust = 0.5, size = 18),
+                       axis.title.x = element_text(size = 14),
+                       axis.title.y = element_text(size = 14),
+                       axis.text.x = element_text(size = 12), 
+                       axis.text.y = element_text(size = 12), 
+                       legend.title = element_text(size = 14),
+                       legend.text = element_text(size = 12)) + 
+    scale_fill_manual(values = c("Same protein" = "#56B4E9", "Different proteins" = "#E69F00")) +
+    geom_text(data = counts, aes(x = Protein_Source_Status, y = -0.8, label = paste(n_formatted, "pairs")), 
+              position = position_dodge(width = 0.9), vjust = -0.5, size = 4) 
+    #+ stat_compare_means(method = "wilcox.test", label = "p.format", size = 8)
+  
+  myplot
+  ggsave(figure_file, myplot, device = "tiff", width = 9, height = 6, units = c("in"))  
+}
+
+
+
+
+
+### Comparing of peptides from the same or different taxa sources
+tax_levels <- c("Phylum","Class","Order","Family","Genus","Genome")
+
+
+for (individual in individuals){
+  print(individual)
+  ### Read in peptide protein source file
+  pep_prot_source_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_prot_source_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_prot_source_file_name)
+  pep_prot_source <- read.table(pep_prot_source_file, header = TRUE, sep = "\t")
+  pep_prot_source <- pep_prot_source
+  head(pep_prot_source)
+  # Sta the number of proteins sharing the peptide
+  pep_prot_source$Protein_Count <- str_count(pep_prot_source$Protein_Source, "\\|") + 1
+  head(pep_prot_source$Protein_Count)
+  
+  
+  ### Read in calculated SCC file
+  scc_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+  scc_file <- file.path("rm_mbr_individual_pep_scc", scc_file_name)
+  org_matrix_long_table <- fread(scc_file, sep = "\t")
+  filtered_matrix_long_table <- org_matrix_long_table
+  
+  for (tax_level in tax_levels){
+    ### Attaching parent protein to the peptide in peptide pairs
+    #Peptide_1
+    filtered_matrix_long_table <- org_matrix_long_table %>%
+      left_join(pep_prot_source %>% select(Peptide, !!sym(tax_level)), by = c("Peptide_1" = "Peptide")) %>%
+      rename(Peptide_1_Tax_Source = !!sym(tax_level))
+    #Peptide_2
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      left_join(pep_prot_source %>% select(Peptide, !!sym(tax_level)), by = c("Peptide_2" = "Peptide"))%>%
+      rename(Peptide_2_Tax_Source = !!sym(tax_level))
+    
+    ### Add a column to check peptide pairs taxa source status (same taxa/different taxa)
+    nrow(matrix_long_table)
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      filter(!is.na(Peptide_1_Tax_Source) & !is.na(Peptide_2_Tax_Source))
+    nrow(filtered_matrix_long_table)
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      filter(Peptide_1_Tax_Source != "-" & Peptide_2_Tax_Source != "-")
+    nrow(filtered_matrix_long_table)
+    
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      mutate(Peptide_Taxa_Source_Status = if_else(Peptide_1_Tax_Source == Peptide_2_Tax_Source, 
+                                             "Same taxon", 
+                                             "Different taxa"))
+    head(filtered_matrix_long_table)
+    nrow(filtered_matrix_long_table)
+    print(tax_level)
+    
+    
+    
+    # Output the number of each group
+    print(table(filtered_matrix_long_table$Peptide_Taxa_Source_Status))
+    counts <- as.data.frame(table(filtered_matrix_long_table$Peptide_Taxa_Source_Status))
+    names(counts) <- c("Peptide_Taxa_Source_Status", "n")
+    counts$n_formatted <- format(counts$n, big.mark = ",", scientific = FALSE)
+    
+    
+    ### Boxplot
+    figure_title <- paste0(individual, "_", tax_level, " Level")
+    print(figure_title)
+    figure_file_name <- paste0(individual, "_", tax_level, "_level_pep_SCC_compare.tiff")
+    figure_file <- file.path("figures", figure_file_name)
+    
+  
+    # Boxplot
+    myplot <- ggplot(filtered_matrix_long_table, aes(x = Peptide_Taxa_Source_Status, y = SCC)) +
+      geom_violin(aes(fill = Peptide_Taxa_Source_Status)) + ylim(-1,1) + 
+      geom_boxplot(width = 0.2, fill = "white") +
+      labs(title = figure_title,
+           x = "Peptide Pairs Taxa Source Status",
+           y = "SCC", fill = "Peptide Pairs Taxa Source Status") +
+      theme_bw() + theme(plot.title = element_text(hjust = 0.5, size = 18),
+                         axis.title.x = element_text(size = 14),
+                         axis.title.y = element_text(size = 14),
+                         axis.text.x = element_text(size = 12), 
+                         axis.text.y = element_text(size = 12), 
+                         legend.title = element_text(size = 14),
+                         legend.text = element_text(size = 12)) + 
+      scale_fill_manual(values = c("Same taxon" = "#56B4E9", "Different taxa" = "#E69F00")) +
+      geom_text(data = counts, aes(x = Peptide_Taxa_Source_Status, y = -0.8, label = paste(n_formatted, "pairs")), 
+                position = position_dodge(width = 0.9), vjust = -0.5, size = 4) 
+      #+ stat_compare_means(method = "wilcox.test", label = "p.format", size = 8)
+    
+    myplot
+    ggsave(figure_file, myplot, device = "tiff", width = 9, height = 6, units = c("in"))      
+  }
+}
+
+
+```
+
+
+### tSNE plot of peptides
+```{r}
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_scc/")
+library(tidyverse)
+library(data.table)
+library(Rtsne)
+library(ggpubr)
+
+
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+
+
+# Set output path/dir
+output_dir  <- "tSNE_plot"
+# Check the existence of the output dir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("Output dir created:", output_dir , "\n")
+} else {
+  cat("Output dir existed:", output_dir , "\n")
+}
+
+
+individual <- "V45"
+for (individual in individuals){
+  # Read in calculated SCC wide table
+  print(individual)
+  infile_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.wide.out")
+  infile <- infile_name
+  
+  matrix_data <- fread(infile)
+  head(colnames(matrix_data))
+  ncol(matrix_data)
+  head(rownames(matrix_data))
+  nrow(matrix_data)
+  
+  matrix_rownames <- matrix_data[[1]]
+  matrix_data <- matrix_data[, -1]
+  matrix_data <- as.matrix(matrix_data)
+  rownames(matrix_data) <- matrix_rownames
+  
+  head(colnames(matrix_data))
+  ncol(matrix_data)
+  head(rownames(matrix_data))
+  nrow(matrix_data)
+  
+  
+  ## Fast calculation of tSNE
+  duplicate_rows <- duplicated(matrix_data)
+  matrix_data <- matrix_data[!duplicate_rows, ]
+  nrow(matrix_data)
+  print(nrow(matrix_data))
+  ##########Modify the perplexity for tSNE calculation
+  set.seed(123)
+  print("Calculating tSNE")
+  tsne_result <- Rtsne(matrix_data, num_threads = 8, perplexity = 30)
+  ggscatter(as.data.frame(tsne_result$Y), x= "V1", y="V2")
+  
+  
+  ########## Get and output the peptide list
+  pep_list <- rownames(matrix_data)
+  pep_list_name <- paste0(individual, "_filtered_tsne_matrix_pep.out")
+  write.table(pep_list, pep_list_name, col.names = FALSE, row.names = FALSE, quote = FALSE)
+  pep_list <- as.data.frame(pep_list)
+  colnames(pep_list) <- "Peptide"
+  
+  ########## Attaching peptide annotation to the pep_list
+  ########## Read in peptide annotation data
+  # pep_anno_file_path <- "../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine/"
+  
+  pep_anno_file_path <- "../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine/"
+  pep_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_anno_file <- file.path(pep_anno_file_path, pep_anno_file_name)
+  pep_anno_data <- read.table(pep_anno_file, sep="\t",header = TRUE)
+
+  
+  org_pep_anno_data<- left_join(pep_list, pep_anno_data, by = "Peptide") 
+  # Modify taxa anno data
+  org_pep_anno_data[is.na(org_pep_anno_data)] <- "Unannotated"
+  org_pep_anno_data[org_pep_anno_data == "-"] <- "Unannotated"
+  head(org_pep_anno_data)
+  
+  
+  # Output tSNE plot with taxa annotation at different levels.
+  tax_levels <- c("Phylum", "Class", "Order", "Family",
+                  "Genus", "Genome", "Species")
+  tax_level <- "Phylum"
+  for (tax_level in tax_levels){
+    org_pep_anno_data %>%
+    count(!!sym(tax_level)) %>%
+    arrange(desc(n))  %>% 
+    slice(1:9) %>%
+    pull(!!sym(tax_level)) -> top_taxa
+    
+    tax_pep_anno_data <- org_pep_anno_data %>%
+    mutate(Top_taxa = ifelse(!!sym(tax_level) %in% top_taxa, as.character(!!sym(tax_level)), "Other taxa"))
+    
+    # Attaching taxa info to tSNE results
+    colnames(tsne_result$Y) <- c ("tSNE_1", "tSNE_2")
+    tsne_data <- data.frame(sample = pep_list, Type = tax_pep_anno_data$Top_taxa, tsne_result$Y)
+    ######### Output tSNE results
+    tsne_file <- paste0(individual, "_SCC_pairs_",tax_level,"_tSNE_data.out")
+    write.table(tsne_data, tsne_file, col.names = TRUE, row.names = FALSE, quote = FALSE)    
+    
+    ggscatter(tsne_data, x = "tSNE_1", y = "tSNE_2", color = "Type",alpha = 0.7, palette = "npg")
+    ########## Coregulated peptide pairs or all peptide pairs results
+    figure_name <- paste0(individual, "_All_SCC_map_", tax_level,".tiff")
+    ggsave(figure_name, width = 8, height = 6, units = "in") 
+  }
+  
+  
+  ########## Moving generated files to tSNE plot directories
+  pep_out_files <- list.files(path = ".", pattern = "_pep\\.out$")
+  tsne_out_files <- list.files(path = ".", pattern = "_tSNE_data\\.out$")
+  tiff_files <- list.files(path = ".", pattern = "\\.tiff$")
+  
+  file.rename(pep_out_files, file.path(output_dir,pep_out_files))
+  file.rename(tsne_out_files, file.path(output_dir,tsne_out_files))
+  file.rename(tiff_files, file.path(output_dir,tiff_files))
+}
+
+
+
+### Recolor tSNE plots
+library(ggplot2)
+library(ggsci)
+
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_scc/tSNE_plot/")
+
+individuals <- c("V45","V46", "V47","V48", "V49", "V52")
+
+
+for (individual in individuals){
+  tsne_file <- paste0(individual, "_SCC_pairs_Family_tSNE_data.out")
+  figure_file <- paste0(individual, "_Peptide_family_tSNE_data.tiff")
+  tsne_data<- read.table(tsne_file, header = TRUE, sep = " ")
+  my_plot <- ggplot(tsne_data, aes(x = tSNE_1, y = tSNE_2, color = Type)) +
+      geom_point(alpha = 0.8) +
+      scale_color_manual(values = c(
+          "Enterobacteriaceae" = "#D62728", "Lachnospiraceae" = "#FFBB78",
+          "Ruminococcaceae" = "#9467BD", "Eggerthellaceae" = "#8C564B",
+          "Bacteroidaceae" = "#2CA02C", "Burkholderiaceae" = "#E377C2",
+          "Erysipelotrichaceae" = "#FF7F0EFF", "Tannerellaceae" = "#BCBD22",
+          "Oscillospiraceae" = "#1F77B4FF", "Bifidobacteriaceae" = "#FF9896",
+          "Fusobacteriaceae" = "#C49C4F", "Rikenellaceae" = "#98DF8A",
+          "Acidaminococcaceae" = "#C5B0D5",
+          "Unannotated" = "#7F7F7F", "Other_taxa" = "#17BECF")) +
+      theme_bw()
+  
+  my_plot
+  ggsave(figure_file, my_plot,  height = 9, width = 12, unit = "in")
+}
+
+
+
+```
+
+
+
+### Sta the average peptide abundance before calculating taxa-normalized intensity
+```{r}
+
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+
+
+for (individual in individuals){
+  print(individual)
+  ### Read in original intensity and convert into long table
+  org_pep_int_file_name <- paste0("sparsity_0.2_", individual, "_rm_mbr_shared_quantified_peptides.out")
+  org_pep_int_file <- file.path("rm_mbr_individual_pep_quant", org_pep_int_file_name)
+  
+  org_pep_int_data <- read.table(org_pep_int_file, header = TRUE, sep = "\t")
+  org_pep_int_long_data <- reshape2::melt(org_pep_int_data, id.vars = c("Sequence"), variable.name = "Sample", value.name = "Original_Intensity")
+  
+  # Calculate average intensity of non-zero values
+  non_zero_pep_int_long_data <- org_pep_int_long_data %>% filter(Original_Intensity > 0)
+  avg_non_zero_int <- mean(non_zero_pep_int_long_data$Original_Intensity)
+  print(avg_non_zero_int) 
+}
+
+    
+    
+```
+
+
+### Calculate taxa-normalized intensity based on unique/distinct peptides
+```{r}
+library(dplyr)
+
+# Creat a new directory "rm_mbr_individual_pep_taxa_normal_intensity"
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_taxa_normal_intensity/")
+
+
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+tax_level <- "Genome"
+# individual <- "V20"
+
+
+for (individual in individuals){
+  ### Extract quantified distinct peptide (peptide specific to a gene/protein) from each individual
+  #Read in peptide annotation file
+  pep_anno_file <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_anno_data <- read.table(pep_anno_file, header = TRUE, sep = "\t")
+  head(pep_anno_data)
+  nrow(pep_anno_data)
+  #Select distinct peptides
+  distinct_pep_anno_data <- pep_anno_data %>% filter(!grepl("\\|", Protein_Source))
+  nrow(distinct_pep_anno_data)
+  
+  #Read in peptide quantifiction file
+  # #Quantification of peptides passing sparsity threshold.
+  # pep_quant_file <- paste0("sparsity_0.2_", individual, "_rm_mbr_shared_quantified_peptides.out")
+  #Quantification of all peptides.
+  pep_quant_file <- paste0(individual, "_rm_mbr_quantified_peptides.out")
+  pep_quant_data <- read.table(pep_quant_file, header = TRUE, sep = "\t")
+  nrow(pep_quant_data)
+  
+  #Attach quantification results to distinct peptides
+  distinct_pep_quant_data <- inner_join(distinct_pep_anno_data, pep_quant_data, by = c("Peptide" = "Sequence"))
+  head(distinct_pep_quant_data)
+  nrow(distinct_pep_quant_data)
+  
+  
+  
+  ### Generate taxa normalize abundance file of each individual
+  selected_abundance_data <- distinct_pep_quant_data
+  nrow(selected_abundance_data)
+
+  ###### Filtering peptides with non-zero values in >= 20% samples
+  # sparsity_filter(data_frame,sparsity_threshold,non_sample_column)
+  nrow(selected_abundance_data)
+  #selected_abundance_data <- sparsity_filter(selected_abundance_data,0.2,12)
+  nrow(selected_abundance_data)
+  
+  ###### Sta peptides taxonomic information
+  table(selected_abundance_data$Family)
+  genome_table <- table(selected_abundance_data$Genome)
+  sorted_genome_table <- sort(genome_table, decreasing = TRUE)
+  sorted_genome_table
+  sorted_genome_table <- as.data.frame(sorted_genome_table)
+  colnames(sorted_genome_table) <- c("Genome", "Number_of_peptides")
+  # Get the top taxa with largest number of peptides
+  tax_names <- sorted_genome_table %>% select(Genome) %>% slice(1:10) %>% pull()
+  # for (tax_name in tax_names){
+  #   print(tax_name)
+  # }
+  
+  
+  ### Calculate taxa-normalized intensity for each taxa
+  for (tax_name in tax_names){
+    ###### Selecting peptide abundance of peptides from the specific taxon
+    tax_selected_abundance_data <- selected_abundance_data %>% filter(!!sym(tax_level) == tax_name)
+    nrow(tax_selected_abundance_data)
+    tax_selected_abundance_data <- tax_selected_abundance_data %>% select(c("Peptide", starts_with("Intensity")))
+    
+    
+    ###### Output taxon-specific individual peptide raw abundance
+    file_name <- paste0(individual, "_", tax_name, "_raw_peptide_abundance.out")
+    write.table(tax_selected_abundance_data, file_name, sep= "\t", quote = FALSE, row.names = FALSE)
+    
+    
+    ### Peptide abundance normalization
+    # Sample specific peptide abundance normalization. (Peptide abundance/Total peptide abundance of all peptides from the taxon in each sample)*10^8
+    normalized_tax_selected_abundance_data <- tax_selected_abundance_data %>%
+      mutate(across(starts_with("Intensity"), ~ ./sum(.), .names = "rel_{.col}")) %>%
+      select(Peptide, starts_with("rel_Intensity")) %>%
+      mutate(across(starts_with("rel"), ~ . * 10^8))
+    
+    # Rename column names
+    normalized_tax_selected_abundance_data <- normalized_tax_selected_abundance_data %>%
+      rename_with(~ gsub("^rel_", "", .x), starts_with("rel_Intensity"))
+    head(normalized_tax_selected_abundance_data)
+    
+    # Replace all "NA" values to zero
+    normalized_tax_selected_abundance_data <- normalized_tax_selected_abundance_data %>%
+      mutate_all(~replace_na(., 0))
+    
+    ###### Output taxon-specific individual peptide abundance (taxon normalized abundances)
+    file_name <- paste0(individual, "_", tax_name, "_normalized_peptide_abundance.out")
+    write.table(normalized_tax_selected_abundance_data, file_name, sep= "\t", quote = FALSE, row.names = FALSE)
+  }
+}
+
+
+
+
+
+
+
+
+###### Calculate peptide Log2 abundance fold changes (FC) based on taxa-normalized intensities
+library(dplyr)
+library(reshape2)
+
+## Define a function to convert the wide abundance table to a long table
+table_convert <- function(wide_table){
+  # Converting the wide table to a long table
+  long_table <- melt(wide_table, id.vars = c("Peptide"), variable.name = "Sample", value.name = "Intensity")
+  return(long_table)
+}
+
+## Define a function to calculate abundance log2 fold change against control sample and return the calculated wide table
+calculate_log2_fold_change <- function(abundance_data,control_ID){
+  # To avoid zero value, add 1 to all abundance
+  abundance_data$Intensity <- as.numeric(abundance_data$Intensity)
+  abundance_data$Intensity <- abundance_data$Intensity + 1
+  
+  ## Calculate Fold change
+  # Get the abundance info of control groups
+  control_abundance_data <- abundance_data %>%
+    filter(grepl(control_ID, Sample))
+  
+  # Create a named vector of control abundances for efficient lookup
+  control_abundances <- setNames(control_abundance_data$Intensity, control_abundance_data$Sequence)
+  
+  # Calculate fold change for each row (vectorized operation)
+  abundance_data <- abundance_data %>%
+  mutate(fold_change = log2((Intensity / control_abundances[Sequence]) + 0.01))
+  
+  return(abundance_data)
+}
+
+
+
+### Main Function: Calculate peptide abundance fold change between treatments and the DMSO control of different individuals
+# List of individuals
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# Control identifier
+control_ID <- c("P4D3", "P4D10")
+
+
+# Calculate peptide abundance fold change
+for (individual in individuals){
+  # Get the name of Top Genomes from the individual
+  print(individual)
+  infile_path <- file.path(individual)
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  # Calculate Log2 FC of normalized peptide intensity from each Genome
+  # Set output path/dir
+  output_dir <- file.path(individual, "Log2_FC")
+  # Check the existence of the output dir
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir)
+    cat("Output dir created:", output_dir , "\n")
+  } else {
+    cat("Output dir existed:", output_dir , "\n")
+  }
+  
+  for (tax_name in tax_names){
+    # Read in normalized abundance file
+    abundance_file_name <- paste0(individual, "_", tax_name, "_normalized_peptide_abundance.out")
+    abundance_file <- file.path(individual, abundance_file_name)
+    abundance_data <- read.table(abundance_file, row.names = NULL, header = TRUE,sep = "\t")
+    
+    # Convert abundance data into long table
+    abundace_long_data <- table_convert(abundance_data)
+    head(abundace_long_data)
+    abundace_long_data$Intensity <- as.numeric(abundace_long_data$Intensity) + 1
+    
+    
+    ## Calculate Fold change
+    # Get the abundance info of control groups
+    control_ID_pattern <- paste(control_ID, collapse="|")
+    control_abundance_data <- abundace_long_data %>%
+      filter(grepl(control_ID_pattern, Sample))
+    nrow(control_abundance_data)
+    head(control_abundance_data)
+    
+    # Create a named vector of mean abundances of control groups for efficient lookup
+    control_abundances <- control_abundance_data %>%
+    group_by(Peptide) %>%
+    summarise(Control_Intensity = mean(Intensity, na.rm = TRUE)) %>%
+    ungroup()
+    print(head(control_abundances))
+    control_abundances <- setNames(control_abundances$Control_Intensity, control_abundances$Peptide)
+    print(head(control_abundances))
+    
+    
+    # Calculate fold change for each row (vectorized operation)
+    abundace_long_data <- abundace_long_data %>%
+    mutate(log2_fold_change = log2(Intensity / control_abundances[as.character(Peptide)]))
+    
+    
+    ### Output results
+    # Output fold change calculation results into long table
+    output_file_name <- paste0(individual, "_", tax_name, "_fold_change.out")
+    output_file <- file.path(output_dir, output_file_name)
+    #print(output_file)
+    write.table(abundace_long_data, output_file,quote = FALSE, row.names = FALSE)
+    
+    # Output fold change calculation results into wide table (matrix)
+    wide_data <- dcast(abundace_long_data, Peptide ~ Sample, value.var = "log2_fold_change")
+    # wide_output_file <- paste0(output_dir,individual, "_fold_change_wide.out")
+    wide_output_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out")
+    wide_output_file <- file.path(output_dir, wide_output_file_name)
+    print(wide_output_file)
+    write.table(wide_data, wide_output_file,quote = FALSE, row.names = FALSE)
+  }
+}
+
+
+
+
+
+
+###### Calculate SCC of calculated FC
+# Load necessary libraries
+library(reshape2)
+library(dplyr)
+library(data.table)
+library(ggplot2)
+library(tibble)
+library(data.table); library(reshape2); library(ggplot2); library(treeClust)
+
+
+### Main function
+# Different types of correlation coefficients
+# PCC: Pearson correlation coefficient
+# SCC: Spearman correlation coefficient
+# cc_types <- c("PCC","SCC")
+
+# List of individuals
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# Calculate correlation coefficients of fold changes of peptide pairs and output results
+method = "spearman"
+cc_type <- "SCC"
+
+for (individual in individuals){
+  print(individual)
+  
+  ### Set input file path and output file path
+  # Input file path
+  input_dir <- file.path(individual, "Log2_FC")
+  
+  # Set output path/dir
+  output_dir  <- file.path(individual, "Calculated_SCC")
+  # Check the existence of the output dir
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir)
+    cat("Output dir created:", output_dir , "\n")
+  } else {
+    cat("Output dir existed:", output_dir , "\n")
+  }
+  
+  
+  ### Get input file list
+  # Get the name of Top Genomes from the individual
+  print(individual)
+  infile_path <- file.path(individual, "Log2_FC")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  for (tax_name in tax_names){
+    each_data_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out")
+    each_data <- file.path(input_dir, each_data_name)
+    print(each_data)
+    
+    fold_change_data <- fread(each_data)
+    fold_change_data <- data.frame(fold_change_data , row.names = 1)
+    head(fold_change_data)
+    nrow(fold_change_data)
+    ncol(fold_change_data)
+    cat("Total rows in the dataset:", nrow(fold_change_data), "\n")
+    
+    
+    ### Single core calculation and sta the calculation time
+    t_data <- t(fold_change_data)
+    head(t_data)
+    head(colnames(t_data))
+    head(rownames(t_data))
+  
+    cat("Calculating SCC.")
+    correlation_matrix <- cor(t_data, method = method, use = "pairwise.complete.obs")
+    
+    nrow(correlation_matrix)
+    head(colnames(correlation_matrix))
+    ncol(correlation_matrix)
+    head(rownames(correlation_matrix))
+    
+    wide_correlation_results <- as.matrix(correlation_matrix)
+    head(colnames(wide_correlation_results))
+    ncol(wide_correlation_results)
+    head(rownames(wide_correlation_results))
+    nrow(wide_correlation_results)
+    
+    
+    ### Output correlation coefficients calculation results into wide table
+    wide_outfile_name <- paste0(each_data_name, "_", cc_type, "_correlation.wide.out")
+    wide_outfile <- file.path(output_dir, wide_outfile_name)
+    write.table(wide_correlation_results, wide_outfile, row.names = TRUE, col.names = TRUE, quote=FALSE,sep="\t")
+    
+    
+      
+    ### Output correlation coefficients calculation results into long table
+    # Define the outfile name
+    outfile_name <- paste0(each_data_name, "_", cc_type, "_correlation.out")
+    outfile <- file.path(output_dir, outfile_name)
+    # Covert calculated matrix into long tables
+    SCCs <- as.data.table(melt(as.matrix(correlation_matrix)))  # Convert to a long data table
+    SCCs <- SCCs[, .(Peptide_1 = as.character(Var1),  # Change colnames and types
+                 Peptide_2 = as.character(Var2),
+                 SCC = value)]
+    SCCs <- SCCs[Peptide_1 > Peptide_2]  # Remove self-comparisons and duplicate pairs
+    head(SCCs)
+    cat("Total rows in Spearman's correlation results:", nrow(SCCs), "\n")
+    # Output correlation coefficients calculation results into long table
+    write.table(SCCs, outfile, row.names = FALSE,quote=FALSE,sep="\t")
+  }
+}
+```
+
+
+### Calculate SCC of raw intensities of unique/distinct peptides
+```{r}
+library(dplyr)
+library(reshape2)
+
+# Required self-defined functions
+"calculate_log2_fold_change";"table_convert"
+
+### Main Function: Calculate peptide abundance fold change between treatments and the DMSO control of different individuals
+# List of individuals
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# Control identifier
+control_ID <- c("P4D3", "P4D10")
+
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/")
+
+# Calculate peptide abundance fold change based on raw intensities
+for (individual in individuals){
+  # Get the name of Top Genomes from the individual
+  print(individual)
+  infile_path <- file.path(individual, "Calculated_SCC")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  # Calculate Log2 FC of normalized peptide intensity from each Genome
+  # Set output path/dir
+  output_dir <- file.path(individual, "Log2_FC_Raw_Intensities")
+  # Check the existence of the output dir
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir)
+    cat("Output dir created:", output_dir , "\n")
+  } else {
+    cat("Output dir existed:", output_dir , "\n")
+  }
+  
+  for (tax_name in tax_names){
+    # Read in normalized abundance file
+    abundance_file_name <- paste0(individual, "_", tax_name, "_raw_peptide_abundance.out")
+    abundance_file <- file.path(individual, abundance_file_name)
+    abundance_data <- read.table(abundance_file, row.names = NULL, header = TRUE,sep = "\t")
+    
+    # Convert abundance data into long table
+    abundace_long_data <- table_convert(abundance_data)
+    head(abundace_long_data)
+    abundace_long_data$Intensity <- as.numeric(abundace_long_data$Intensity) + 1
+    
+    
+    ## Calculate Fold change
+    # Get the abundance info of control groups
+    control_ID_pattern <- paste(control_ID, collapse="|")
+    control_abundance_data <- abundace_long_data %>%
+      filter(grepl(control_ID_pattern, Sample))
+    nrow(control_abundance_data)
+    head(control_abundance_data)
+    
+    # Create a named vector of mean abundances of control groups for efficient lookup
+    control_abundances <- control_abundance_data %>%
+    group_by(Peptide) %>%
+    summarise(Control_Intensity = mean(Intensity, na.rm = TRUE)) %>%
+    ungroup()
+    print(head(control_abundances))
+    control_abundances <- setNames(control_abundances$Control_Intensity, control_abundances$Peptide)
+    print(head(control_abundances))
+    
+    
+    # Calculate fold change for each row (vectorized operation)
+    abundace_long_data <- abundace_long_data %>%
+    mutate(log2_fold_change = log2(Intensity / control_abundances[as.character(Peptide)]))
+    
+    
+    ### Output results
+    # Output fold change calculation results into long table
+    output_file_name <- paste0(individual, "_", tax_name, "_fold_change.out")
+    output_file <- file.path(output_dir, output_file_name)
+    #print(output_file)
+    write.table(abundace_long_data, output_file,quote = FALSE, row.names = FALSE)
+    
+    # Output fold change calculation results into wide table (matrix)
+    wide_data <- dcast(abundace_long_data, Peptide ~ Sample, value.var = "log2_fold_change")
+    # wide_output_file <- paste0(output_dir,individual, "_fold_change_wide.out")
+    wide_output_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out")
+    wide_output_file <- file.path(output_dir, wide_output_file_name)
+    print(wide_output_file)
+    write.table(wide_data, wide_output_file,quote = FALSE, row.names = FALSE)
+  }
+}
+
+
+
+
+
+
+###### Calculate SCC of calculated FC for raw intensities
+# Load necessary libraries
+library(reshape2)
+library(dplyr)
+library(data.table)
+library(ggplot2)
+library(tibble)
+library(data.table); library(reshape2); library(ggplot2); library(treeClust)
+
+
+### Main function
+# Different types of correlation coefficients
+# PCC: Pearson correlation coefficient
+# SCC: Spearman correlation coefficient
+# cc_types <- c("PCC","SCC")
+
+# List of individuals
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# Calculate correlation coefficients of fold changes of peptide pairs and output results
+method = "spearman"
+cc_type <- "SCC"
+
+for (individual in individuals){
+  print(individual)
+  
+  ### Set input file path and output file path
+  # Input file path
+  input_dir <- file.path(individual, "Log2_FC_Raw_Intensities")
+  
+  # Set output path/dir
+  output_dir  <- file.path(individual, "Calculated_SCC_Raw_Intensities")
+  # Check the existence of the output dir
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir)
+    cat("Output dir created:", output_dir , "\n")
+  } else {
+    cat("Output dir existed:", output_dir , "\n")
+  }
+  
+  
+  ### Get input file list
+  # Get the name of Top Genomes from the individual
+  print(individual)
+  infile_path <- file.path(individual, "Log2_FC_Raw_Intensities")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  for (tax_name in tax_names){
+    each_data_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out")
+    each_data <- file.path(input_dir, each_data_name)
+    print(each_data)
+    
+    fold_change_data <- fread(each_data)
+    fold_change_data <- data.frame(fold_change_data , row.names = 1)
+    head(fold_change_data)
+    nrow(fold_change_data)
+    ncol(fold_change_data)
+    cat("Total rows in the dataset:", nrow(fold_change_data), "\n")
+    
+    
+    ### Single core calculation and sta the calculation time
+    t_data <- t(fold_change_data)
+    head(t_data)
+    head(colnames(t_data))
+    head(rownames(t_data))
+  
+    cat("Calculating SCC.")
+    correlation_matrix <- cor(t_data, method = method, use = "pairwise.complete.obs")
+    
+    nrow(correlation_matrix)
+    head(colnames(correlation_matrix))
+    ncol(correlation_matrix)
+    head(rownames(correlation_matrix))
+    
+    wide_correlation_results <- as.matrix(correlation_matrix)
+    head(colnames(wide_correlation_results))
+    ncol(wide_correlation_results)
+    head(rownames(wide_correlation_results))
+    nrow(wide_correlation_results)
+    
+    
+    ### Output correlation coefficients calculation results into wide table
+    wide_outfile_name <- paste0(each_data_name, "_", cc_type, "_correlation.wide.out")
+    wide_outfile <- file.path(output_dir, wide_outfile_name)
+    write.table(wide_correlation_results, wide_outfile, row.names = TRUE, col.names = TRUE, quote=FALSE,sep="\t")
+    
+    
+      
+    ### Output correlation coefficients calculation results into long table
+    # Define the outfile name
+    outfile_name <- paste0(each_data_name, "_", cc_type, "_correlation.out")
+    outfile <- file.path(output_dir, outfile_name)
+    # Covert calculated matrix into long tables
+    SCCs <- as.data.table(melt(as.matrix(correlation_matrix)))  # Convert to a long data table
+    SCCs <- SCCs[, .(Peptide_1 = as.character(Var1),  # Change colnames and types
+                 Peptide_2 = as.character(Var2),
+                 SCC = value)]
+    SCCs <- SCCs[Peptide_1 > Peptide_2]  # Remove self-comparisons and duplicate pairs
+    head(SCCs)
+    cat("Total rows in Spearman's correlation results:", nrow(SCCs), "\n")
+    # Output correlation coefficients calculation results into long table
+    write.table(SCCs, outfile, row.names = FALSE,quote=FALSE,sep="\t")
+  }
+}
+```

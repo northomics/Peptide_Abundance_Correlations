@@ -1,0 +1,1640 @@
+---
+title: "Manuscript_Supplementary_Figures"
+author: "ZhongzhiSun"
+date: "2024-11-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+### Figure S1. Stacked barplot of relative abundance of peptides assigned to different genera across individuals.
+```{r}
+library(tidyverse)
+
+# Set working directory to the data folder relative to the script location
+setwd("../data/Drugs_dataset/taxa_profile/")
+
+
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+
+# Create an empty dataframe to store data from all individuals
+all_data <- data.frame()
+
+# 1. Read data from all individuals
+for (individual in individuals) {
+  
+  file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+
+  # Read data
+  data <- read.delim(file_name, header = TRUE, sep = "\t") %>%
+    filter(Genus != "-")  # Filter out peptides without genus-level annotation
+  
+  data$Individual <- individual  # Add individual information
+  
+  all_data <- bind_rows(all_data, data)  # Combine data from all individuals
+}
+
+# 2. Count the total number of peptides in each Genus across all individuals
+genus_total_counts <- all_data %>%
+  group_by(Genus) %>%
+  summarise(Total_Peptide_Count = n()) %>%
+  arrange(desc(Total_Peptide_Count))
+
+# 3. Select the top 12 genera with the highest total peptide counts across all individuals
+top_n <- 12
+top_genera <- genus_total_counts %>%
+  slice_max(Total_Peptide_Count, n = top_n) %>%
+  pull(Genus)
+
+# 4. Classify data based on the top 12 genera, assigning all others to "Other genera"
+all_data <- all_data %>%
+  mutate(Genus_Grouped = if_else(Genus %in% top_genera, Genus, "Other genera"))
+
+# 5. Count the number of peptides in each Genus for each individual and calculate relative abundance (percentage)
+final_counts <- all_data %>%
+  group_by(Individual, Genus_Grouped) %>%
+  summarise(Peptide_Count = n(), .groups = 'drop') %>%
+  group_by(Individual) %>%
+  mutate(Percentage = Peptide_Count / sum(Peptide_Count) * 100)  # Calculate percentage
+
+# 6. Calculate the total abundance across all individuals and sort by abundance
+genus_order <- final_counts %>%
+  group_by(Genus_Grouped) %>%
+  summarise(Total_Percentage = sum(Percentage), .groups = 'drop') %>%
+  arrange(desc(Total_Percentage)) %>%
+  pull(Genus_Grouped)
+
+# 7. Reverse factor order to display the least abundant genera at the bottom and the most abundant at the top
+final_counts$Genus_Grouped <- factor(final_counts$Genus_Grouped, levels = rev(genus_order))
+
+# 8. Plot the stacked bar chart with custom colors
+ggplot(final_counts, aes(x = Individual, y = Percentage, fill = Genus_Grouped)) +
+  geom_bar(stat = "identity", position = "fill") +  # position="fill" ensures bars have equal heights
+  labs(x = "Individual", y = "Percentage of peptides", fill = "Genus") +
+  theme_bw() +
+  theme(text = element_text(size = 14),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c(RColorBrewer::brewer.pal(12, "Set3"), "gray70"))  # Custom colors
+
+```
+
+
+
+### Figure S2. Heatmap plots of peptide Log2 intensity of peptides from top abundance proteins.
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(ggsci)
+library(data.table)
+library(ComplexHeatmap)
+library(viridis)
+library(bit64)
+
+# Set working directory to the data folder relative to the script location
+setwd("../data/Drugs_dataset")
+
+
+### Plot Heatmap for data from each individual
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+
+
+# individuals <- c("V52")
+for (individual in individuals){
+  print(individual)
+  
+  ### Read in peptide protein source file
+  pep_prot_source_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_prot_source_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_prot_source_file_name)
+  pep_prot_source <- read.table(pep_prot_source_file, header = TRUE, sep = "\t")
+  pep_prot_source <- pep_prot_source %>% select("Peptide", "Protein_Source")
+  #colnames(pep_prot_source) <- c("Peptide", "Protein_Source")
+  head(pep_prot_source)
+  pep_prot_source$Protein_Count <- str_count(pep_prot_source$Protein_Source, "\\|") + 1
+  head(pep_prot_source$Protein_Count)
+
+  ### Read in peptide intensity matrix
+  correlation_matrix_file_name <- paste0("sparsity_0.2_", individual, "_rm_mbr_shared_quantified_peptides.out")
+  correlation_matrix_file <- file.path("rm_mbr_individual_pep_quant", correlation_matrix_file_name)
+  #readin_correlation_matrix <- fread(correlation_matrix_file, sep = "\t")
+  readin_correlation_matrix <- fread(correlation_matrix_file, sep = "\t", integer64 = "double")
+  rownames(readin_correlation_matrix) <- readin_correlation_matrix$Sequence
+  # # Remove "V1" column in the matrix 
+  # real_readin_correlation_matrix <- subset(readin_correlation_matrix, select = -V1)
+  real_readin_correlation_matrix <- subset(readin_correlation_matrix, select = -Sequence)
+  # head(colnames(real_readin_correlation_matrix))
+  # head(rownames(real_readin_correlation_matrix))
+  # nrow(real_readin_correlation_matrix)
+  # ncol(real_readin_correlation_matrix)
+  # Add row names to the matrix
+  correlation_matrix <- as.matrix(real_readin_correlation_matrix)
+  rownames(correlation_matrix) <- rownames(readin_correlation_matrix)
+  head(colnames(correlation_matrix))
+  head(rownames(correlation_matrix))
+  nrow(correlation_matrix)
+  ncol(correlation_matrix)
+  
+  # Convert peptide intensity wide table into long table
+  correlation_matrix <- as.data.frame(correlation_matrix)
+  correlation_matrix$Sequence <- rownames(correlation_matrix)
+  
+  # Ensure all numeric columns have the same type
+  correlation_matrix[] <- lapply(correlation_matrix, function(x) {
+    if (is.integer64(x)) as.double(x) else x
+  })
+  
+  intensity_long_data <- pivot_longer(correlation_matrix, cols = starts_with("Intensity"), names_to = "Sample", values_to = "Intensity")
+  intensity_long_data$Log2_Intensity <- log2(intensity_long_data$Intensity + 1)
+  
+  head(intensity_long_data)
+  org_matrix_long_table <- intensity_long_data
+  
+  ### Comparing peptide pairs with both peptides only have one parent protein
+  # Attaching number of parent proteins to the peptide sequence 
+  matrix_long_table <- org_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Count), by = c("Sequence" = "Peptide")) %>%
+    rename(Peptide_Protein_Count = Protein_Count)
+
+  # Filtering peptides that only have one parent protein)
+  filtered_matrix_long_table <- matrix_long_table %>% filter(Peptide_Protein_Count == 1)
+  nrow(filtered_matrix_long_table)
+  
+  # Attaching the parent protein to the filtered peptides (peptide only with one parent protein)
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Source), by = c("Sequence" = "Peptide")) %>%
+    rename(Peptide_Protein_Source = Protein_Source)
+  head(filtered_matrix_long_table)
+  
+  # Sta the number of peptides that each protein has
+  protein_pep_count_sta <- as.data.frame(sort(table(filtered_matrix_long_table$Peptide_Protein_Source), decreasing = TRUE))
+  print(head(protein_pep_count_sta,20))
+  
+  #### Select Top proteins with largest number of identified peptides.
+  selected_peptides_prot_sources <- protein_pep_count_sta %>%
+    arrange(desc(Freq)) %>%
+    slice(1:3) %>%
+    distinct(Var1, .keep_all = FALSE)
+  selected_peptides_prot_sources <- c(selected_peptides_prot_sources$Var1)
+  selected_peptides_prot_sources
+
+  # selected_peptides_prot_sources <- c("MGYG000000074_00144", "MGYG000000177_01234", "MGYG000000223_00102", "MGYG000002438_01883", "MGYG000000223_00290", "MGYG000000099_01985", "MGYG000000223_00290", "MGYG000000099_01985")
+  # selected_peptides_prot_sources <- c("MGYG000000223_00102", "MGYG000000223_00290")
+  
+  
+  same_prot_long_table <- filtered_matrix_long_table
+  
+  
+  ### Select peptides from proteins with large number of peptide pairs
+  # filtered_same_prot_long_table <- same_prot_long_table %>% filter(Peptide_Protein_Source == "MGYG000000223_00102" || Peptide_Protein_Source == "MGYG000000223_00603" || Peptide_Protein_Source == "MGYG000000177_01234")
+  
+  filtered_same_prot_long_table <- same_prot_long_table %>% filter(Peptide_Protein_Source %in% selected_peptides_prot_sources)
+  
+  
+  head(filtered_same_prot_long_table)
+  nrow(filtered_same_prot_long_table)
+  same_prot_pep_list <- unique(c(filtered_same_prot_long_table$Sequence))
+  
+  
+
+  pep_intensity_data <- readin_correlation_matrix
+  
+  
+  # Select peptide Log2 abundance data of specific peptides
+  filtered_pep_intensity_data <- pep_intensity_data %>% filter(Sequence %in% same_prot_pep_list)
+  head(filtered_pep_intensity_data)
+  nrow(filtered_pep_intensity_data)
+  
+  # Data checking
+  filtered_pep_intensity_data <- filtered_pep_intensity_data %>% left_join(pep_prot_source,by = c("Sequence" = "Peptide"))
+  head(filtered_pep_intensity_data)
+  nrow(filtered_pep_intensity_data)
+  table(filtered_pep_intensity_data$Protein_Source)
+  
+  ### LineChart Plot
+  # # Convert wide table to long table
+  filtered_pep_fc_long_data <- pivot_longer(filtered_pep_intensity_data, cols = starts_with("Intensity"), names_to = "Sample", values_to = "Log2_Intensity")
+  head(filtered_pep_fc_long_data)
+
+  # Plot linechart of peptide abundance fold change
+  ggplot(data = filtered_pep_fc_long_data, mapping = aes(x = Sample, y = Log2_Intensity, group = Sequence, color = Protein_Source)) + geom_line() + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=.5)) + ylab ("Log2 Intensity")
+
+  
+  
+  ### Heatmap plot
+  heatmap_data <- filtered_pep_intensity_data %>% select(contains("Intensity"))
+  heatmap_data <- as.matrix(heatmap_data)
+  rownames(heatmap_data) <- filtered_pep_intensity_data$Sequence
+  head(heatmap_data)
+  # Heatmap(heatmap_data)
+
+  # Add protein source annotation to peptides (rows)
+  d3_colors <- pal_d3("category10")(10)
+  prot_annotation <- filtered_pep_intensity_data$Protein_Source
+  prot_source_levels <- unique(filtered_pep_intensity_data$Protein_Source)
+  color_mapping <- setNames(d3_colors[1:length(prot_source_levels)], prot_source_levels)
+  
+  # row_anno <- rowAnnotation(df = data.frame(Protein = prot_annotation),
+  #                          col = list(Protein = c("MGYG000000177_01234" = "#1f77b4", "MGYG000000223_00102" = "#ff7f0e", "MGYG000000223_00603" = "#2ca02c")),
+  #                          show_legend = TRUE)
+  
+  row_anno <- rowAnnotation(df = data.frame(Protein = prot_annotation),
+                            col = list(Protein = color_mapping),
+                           show_legend = TRUE)
+  
+
+  ### Heatmap plot
+  # Clustering at both rows and columns
+  # ht <- Heatmap(heatmap_data, left_annotation = row_anno, clustering_distance_rows = "euclidean", show_row_names = FALSE, show_column_names = FALSE, clustering_distance_columns = "euclidean")
+  # ht
+  
+  # Only clustering at rows
+  heatmap_data <- log2(heatmap_data + 1)
+  ht <- Heatmap(heatmap_data, left_annotation = row_anno, clustering_distance_rows = "euclidean", show_row_names = FALSE, show_column_names = TRUE, cluster_columns = FALSE,
+                #col = plasma(256)
+                col = viridis(256),
+                heatmap_legend_param = list(title = "Peptide Log2 Intensity")
+                )
+  ht
+  
+  
+  # Saving the heatmap plot
+  # figure_name <- paste0(individual, "_top_prot_pep_heatmap.jpg")
+  figure_name <- paste0(individual, "_top_prot_pep_Log2FC_heatmap.jpg")
+  jpeg(figure_name, width = 14.4, height = 6, units = "in", res= 300)
+  draw(ht)
+  dev.off()
+  
+  # # Get and output the row order in heatmap
+  ht_drawn <- draw(ht)
+  row_order <- row_order(ht_drawn)
+  clustered_row_names <- rownames(heatmap_data)[row_order]
+  #print(clustered_row_names)
+  heatmap_row_order <- as.data.frame(clustered_row_names)
+  colnames(heatmap_row_order) <- "Sequence"
+  heatmap_row_order <- heatmap_row_order %>% left_join(pep_prot_source,by = c("Sequence" = "Peptide"))
+  outfile_name <- paste0(individual, "_top_prot_pep_Log2FC_heatmap_pep_order.out")
+  write.table(heatmap_row_order, file = outfile_name, sep = "\t", quote= FALSE, row.names = FALSE, col.names = TRUE)
+}  
+```
+
+
+### Figure S3. Global peptide abundance correlation network.
+```{r}
+# Plot interactive networks
+library(visNetwork)
+library(data.table)
+library(dplyr)
+library(igraph)
+library(ggsci)
+library(htmlwidgets)
+library(rgexf)
+
+
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks")
+
+# rm_percentage <- 0.8
+# rm_percentage <- 0.9
+#rm_percentage <- 0.95
+rm_percentage <- 0.99
+
+
+#individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+individual <- "V52"
+
+# ### Set input file path and output file path
+# # Input file path (SCC of taxa-normalized intensity)
+input_dir <- file.path(individual, "Calculated_SCC")
+# Set output path/dir (Taxa-normalized intensity)
+output_dir  <- file.path(individual, "TN_intensity_Gephi_Networks_SCC_top5_percent")
+
+
+# Check the existence of the output dir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("Output dir created:", output_dir , "\n")
+} else {
+  cat("Output dir existed:", output_dir , "\n")
+}
+
+
+# Get Top pairs scc threshold
+correlation_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+correlation_file <-  file.path(input_dir, correlation_file_name)
+correlation_data <- fread(correlation_file, sep = "\t")
+scc_threshold <- quantile(correlation_data$SCC, rm_percentage, na.rm = TRUE)
+print(tax_name)
+print(scc_threshold)
+
+
+# Read in correlation matrix
+correlation_matrix_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.wide.out")
+correlation_matrix_file <- file.path(input_dir, correlation_matrix_file_name)
+readin_correlation_matrix <- fread(correlation_matrix_file, sep = "\t")
+correlation_matrix <- as.matrix(readin_correlation_matrix[,-1])
+rownames(correlation_matrix) <- readin_correlation_matrix$V1
+
+# Remove low SCC from correlation matrix
+filtered_correlation_matrix <- correlation_matrix
+filtered_correlation_matrix[correlation_matrix < scc_threshold] <- 0
+
+# 构建网络图
+network <- graph_from_adjacency_matrix(filtered_correlation_matrix, weighted=TRUE, mode="undirected", diag=FALSE)
+update_network <- delete.vertices(network, degree(network) == 0)
+
+
+### Attaching peptide annotations to the nodes in the network
+# Read in peptide protein source annotations
+pep_prot_anno_dir <- "../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine/Refined_functional_anno"
+pep_prot_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+pep_prot_anno_file <- file.path(pep_prot_anno_dir,individual, pep_prot_anno_file_name)
+pep_prot_anno <- fread(pep_prot_anno_file, sep = "\t")
+pep_prot_anno <- pep_prot_anno %>% select("Peptide", "Protein_Source")
+
+
+# Read in peptide functional source annotations
+pep_func_anno_dir <- "../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine/Refined_functional_anno"
+pep_func_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_func_anno.txt")
+pep_func_anno_file <- file.path(pep_func_anno_dir, individual, pep_func_anno_file_name)
+pep_func_anno <- fread(pep_func_anno_file, sep = "\t")
+pep_func_anno <- pep_func_anno %>% select("Peptide", "BRITE", "COG_Category", "GOs", "KEGG_ko", "KEGG_Module", "KEGG_Pathway", "KEGG_Reaction", "KEGG_TC", "eggNOG_OGs")
+
+
+pep_list <- rownames(correlation_matrix)
+# # Get peptide taxa annotation of selected peptides
+# filtered_pep_tax_anno <- pep_tax_anno %>% filter(Peptide %in% pep_list)
+
+# Get peptide protein annotation of selected peptides
+filtered_pep_prot_anno <- pep_prot_anno %>% filter(Peptide %in% pep_list)
+
+# Get peptide functional annotation of selected peptides
+filtered_pep_func_anno <- pep_func_anno %>% filter(Peptide %in% pep_list)
+
+
+# 创建节点和边数据框
+nodes <- data.frame(id = V(update_network)$name, 
+                    label = V(update_network)$name)
+nodes_num <- nrow(nodes)
+edges <- get.data.frame(update_network, what = "edges")
+edges_num <- nrow(edges)
+
+
+# 合并注释信息
+nodes <- nodes %>% 
+  left_join(filtered_pep_func_anno, by = c("id" = "Peptide")) %>% 
+  left_join(filtered_pep_prot_anno, by = c("id" = "Peptide"))
+head(nodes)
+
+V(update_network)$protein_source <- nodes$Protein_Source
+#V(update_network)$function_category <- nodes$KEGG_Reaction
+V(update_network)$BRITE <- nodes$BRITE
+V(update_network)$COG_Category <- nodes$COG_Category
+V(update_network)$GOs <- nodes$GOs
+V(update_network)$KEGG_ko <- nodes$KEGG_ko
+V(update_network)$KEGG_Module <- nodes$KEGG_Module
+V(update_network)$KEGG_Pathway <- nodes$KEGG_Pathway
+V(update_network)$KEGG_Reaction <- nodes$KEGG_Reaction
+V(update_network)$KEGG_TC <- nodes$KEGG_TC
+V(update_network)$eggNOG_OGs <- nodes$eggNOG_OGs
+
+
+# Checking to avoid empty networks
+if (vcount(update_network) == 0) {
+  cat("No vertices in network for", individual, "and", tax_name, "\n")
+  next
+}
+
+### Output *.gexf file
+gexf_network <- igraph.to.gexf(update_network)
+gexf_file <- file.path(output_dir, paste0(individual, "_top1_anno.gexf"))
+gexf_file
+write.gexf(gexf_network, output = gexf_file)
+
+### Sta the basic information of the network
+## Sta the number of degrees of each node
+node_degrees <- degree(update_network)
+# node_degrees
+node_degrees_frame <- data.frame(Peptide = names(node_degrees), Degree = as.numeric(node_degrees))
+# nrow(node_degrees_frame)
+# ncol(node_degrees_frame)
+head(node_degrees_frame)
+## Output the number of degrees of each node
+node_degrees_frame <- node_degrees_frame[order(-node_degrees_frame$Degree), ]
+#node_degrees_file_name <- sprintf("_SCC0%d_node_degree_sta.out", scc_threshold * 10)
+node_degrees_file_name <- paste0(individual, "_", tax_name, "_top5_anno_networks_node_degree_sta.out")
+node_degrees_file <- file.path(output_dir, node_degrees_file_name)
+write.table(node_degrees_frame, node_degrees_file, sep = "\t", quote = FALSE, row.names = FALSE)  
+
+
+
+### Sta the properties of the network
+diameter_value <- diameter(update_network, directed = FALSE)
+modularity_value <- modularity(cluster_fast_greedy(update_network))
+clustering_coefficient_value <- transitivity(update_network, type = "average")
+average_path_length_value <- mean_distance(update_network, directed = FALSE)
+
+node_number <- vcount(update_network)
+edge_number <- ecount(update_network)
+average_degree <- mean(degree(update_network))
+average_weighted_degree <- mean(strength(update_network, weights = E(update_network)$weight))
+graph_density <- edge_density(update_network)
+
+
+
+print(diameter_value)
+print(modularity_value)
+print(clustering_coefficient_value)
+print(average_path_length_value)
+  
+```
+
+
+### Figure S4. Peptide correlation maps (tSNE plot) clolored at differnt peptide taxonomics annotation levels.
+```{r}
+#setwd("../data/Drugs_dataset/rm_mbr_individual_pep_scc/")
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_scc/")
+library(tidyverse)
+library(data.table)
+library(Rtsne)
+library(ggpubr)
+
+
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+
+
+# Set output path/dir
+output_dir  <- "tSNE_plot"
+# Check the existence of the output dir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("Output dir created:", output_dir , "\n")
+} else {
+  cat("Output dir existed:", output_dir , "\n")
+}
+
+
+individual <- "V45"
+for (individual in individuals){
+  # Read in calculated SCC wide table
+  print(individual)
+  infile_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.wide.out")
+  infile <- infile_name
+  
+  matrix_data <- fread(infile)
+  head(colnames(matrix_data))
+  ncol(matrix_data)
+  head(rownames(matrix_data))
+  nrow(matrix_data)
+  
+  matrix_rownames <- matrix_data[[1]]
+  matrix_data <- matrix_data[, -1]
+  matrix_data <- as.matrix(matrix_data)
+  rownames(matrix_data) <- matrix_rownames
+  
+  head(colnames(matrix_data))
+  ncol(matrix_data)
+  head(rownames(matrix_data))
+  nrow(matrix_data)
+  
+  
+  ## Fast calculation of tSNE
+  duplicate_rows <- duplicated(matrix_data)
+  matrix_data <- matrix_data[!duplicate_rows, ]
+  nrow(matrix_data)
+  print(nrow(matrix_data))
+  ##########Modify the perplexity for tSNE calculation
+  set.seed(123)
+  print("Calculating tSNE")
+  tsne_result <- Rtsne(matrix_data, num_threads = 8, perplexity = 30)
+  ggscatter(as.data.frame(tsne_result$Y), x= "V1", y="V2")
+  
+  
+  ########## Get and output the peptide list
+  pep_list <- rownames(matrix_data)
+  pep_list_name <- paste0(individual, "_filtered_tsne_matrix_pep.out")
+  write.table(pep_list, pep_list_name, col.names = FALSE, row.names = FALSE, quote = FALSE)
+  pep_list <- as.data.frame(pep_list)
+  colnames(pep_list) <- "Peptide"
+  
+  ########## Attaching peptide annotation to the pep_list
+  ########## Read in peptide annotation data
+  
+  pep_anno_file_path <- "../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine/"
+  pep_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_anno_file <- file.path(pep_anno_file_path, pep_anno_file_name)
+  pep_anno_data <- read.table(pep_anno_file, sep="\t",header = TRUE)
+
+  
+  org_pep_anno_data<- left_join(pep_list, pep_anno_data, by = "Peptide") 
+  # Modify taxa anno data
+  org_pep_anno_data[is.na(org_pep_anno_data)] <- "Unannotated"
+  org_pep_anno_data[org_pep_anno_data == "-"] <- "Unannotated"
+  head(org_pep_anno_data)
+  
+  
+  # Output tSNE plot with taxa annotation at different levels.
+  tax_levels <- c("Phylum", "Class", "Order", "Family",
+                  "Genus", "Genome", "Species")
+  tax_level <- "Phylum"
+  for (tax_level in tax_levels){
+    org_pep_anno_data %>%
+    count(!!sym(tax_level)) %>%
+    arrange(desc(n))  %>% 
+    slice(1:9) %>%
+    pull(!!sym(tax_level)) -> top_taxa
+    
+    tax_pep_anno_data <- org_pep_anno_data %>%
+    mutate(Top_taxa = ifelse(!!sym(tax_level) %in% top_taxa, as.character(!!sym(tax_level)), "Other taxa"))
+    
+    # Attaching taxa info to tSNE results
+    colnames(tsne_result$Y) <- c ("tSNE_1", "tSNE_2")
+    tsne_data <- data.frame(sample = pep_list, Type = tax_pep_anno_data$Top_taxa, tsne_result$Y)
+    ######### Output tSNE results
+    tsne_file <- paste0(individual, "_SCC_pairs_",tax_level,"_tSNE_data.out")
+    write.table(tsne_data, tsne_file, col.names = TRUE, row.names = FALSE, quote = FALSE)    
+    
+    ggscatter(tsne_data, x = "tSNE_1", y = "tSNE_2", color = "Type",alpha = 0.7, palette = "npg")
+    ########## Coregulated peptide pairs or all peptide pairs results
+    figure_name <- paste0(individual, "_All_SCC_map_", tax_level,".tiff")
+    ggsave(figure_name, width = 8, height = 6, units = "in") 
+  }
+  
+  
+  ########## Moving generated files to tSNE plot directories
+  pep_out_files <- list.files(path = ".", pattern = "_pep\\.out$")
+  tsne_out_files <- list.files(path = ".", pattern = "_tSNE_data\\.out$")
+  tiff_files <- list.files(path = ".", pattern = "\\.tiff$")
+  
+  file.rename(pep_out_files, file.path(output_dir,pep_out_files))
+  file.rename(tsne_out_files, file.path(output_dir,tsne_out_files))
+  file.rename(tiff_files, file.path(output_dir,tiff_files))
+}
+```
+
+
+### Figure S5. Peptide correlation maps (tSNE plot) clolored at differnt peptide functional annotation categories.
+### Figure S6. Zoomed in peptide correlation maps (tSNE plot) clolored at differnt functional annotation categories.
+```{r}
+library(data.table)
+library(tidyr)
+library(stringr)
+
+setwd("../data/Drugs_dataset/")
+
+### Read in tSNE scatter
+scatter_file_name <- "V52_SCC_pairs_Family_tSNE_data.out"
+scatter_file <- file.path("rm_mbr_individual_pep_scc", "tSNE_plot", scatter_file_name)
+scatter_data <- read.table(scatter_file, header = TRUE, sep = " ")
+head(scatter_data)
+nrow(scatter_data)
+
+
+
+# Read in refined peptide functional annotation file
+pep_func_anno_file_name <- "V52_rm_mbr_quantified_peptides_func_anno.txt"
+pep_func_anno_file <- file.path("rm_mbr_individual_pep_taxa_refine", "Refined_functional_anno", "V52", pep_func_anno_file_name)
+pep_func_anno_data <- fread(pep_func_anno_file, sep = "\t")
+# Extract COG Family from eggNOG_OGs
+pep_func_anno_data <- pep_func_anno_data %>%
+  mutate(COG_Family = str_extract(eggNOG_OGs, "COG\\d+")) %>%
+  mutate(COG_Family = ifelse(is.na(COG_Family), "-", COG_Family))
+
+head(pep_func_anno_data)
+
+
+
+### Add annotation to peptides in the scatter
+func_anno_types <- c("COG_Family", "COG_Category", "EC", "KEGG_Reaction", "KEGG_ko", "KEGG_Module", "KEGG_Pathway",  "KEGG_TC", "eggNOG_OGs")
+
+for (func_anno_type in func_anno_types){
+  # func_anno_type <- "COG_Category"
+  # func_anno_type <- "KEGG_Reaction"
+  # func_anno_type <- "KEGG_ko"
+  # func_anno_type <- "KEGG_Pathway"
+  # func_anno_type <- "KEGG_TC"
+  
+  # Attaching peptide taxonomic annotation to scatter plot  
+  func_scatter_data <- scatter_data %>% dplyr::left_join(pep_func_anno_data %>% select(Peptide, !!sym(func_anno_type)), by = "Peptide")
+  nrow(func_scatter_data)
+  table(func_scatter_data[[func_anno_type]])
+  
+  # Replace NA
+  func_scatter_data <- func_scatter_data %>%
+    mutate(!!sym(func_anno_type) := replace_na(!!sym(func_anno_type), "Unannotated"))
+  
+  # Define unannotated peptides
+  func_scatter_data <- func_scatter_data %>% mutate(!!sym(func_anno_type) := ifelse(!!sym(func_anno_type) == "-",  "Unannotated", !!sym(func_anno_type)))
+  
+  # Get the top function group
+  func_pep_count <- func_scatter_data %>%
+    count(!!sym(func_anno_type), sort = TRUE)
+  print(func_pep_count)
+  top_func <- func_pep_count %>%
+    top_n(13, n) %>%
+    pull(!!sym(func_anno_type))
+  
+  # Only keep top function category
+  func_scatter_data <- func_scatter_data %>%
+    mutate(Func_anno = ifelse(!!sym(func_anno_type) %in% top_func, !!sym(func_anno_type), "Other Functions"))
+  table(func_scatter_data$Func_anno)
+  
+  #Limit the width of figure legend
+  filtered_func_scatter_data <- func_scatter_data
+  filtered_func_scatter_data$Func_anno <- substr(filtered_func_scatter_data$Func_anno, 1, 22)
+  
+  # # Remove unannotated and other functions peptides from the map
+  # filtered_func_scatter_data <- func_scatter_data %>% filter(Func_anno != "Unannotated") %>% filter(Func_anno != "Other Functions")
+  
+
+  
+  ### Scatter plot
+  # Get distinct function annotations and assign d3 colors
+  category20_colors <- ggsci::pal_d3("category20")(20)
+  unique_funcs <- levels(factor(filtered_func_scatter_data$Func_anno))
+  d3_colors <- category20_colors[1:length(unique_funcs)]
+  names(d3_colors) <- unique_funcs
+  # Specify the color of unannotated peptides and other functions peptides
+  d3_colors["Unannotated"] = "#C7C7C7"
+  d3_colors["Other Functions"] = "#9EDAE5"
+  # d3_colors["Unannotated"] = "#000000"
+  # d3_colors["Other Functions"] = "#00000000"
+  
+  myplot <- ggplot(filtered_func_scatter_data, aes(x = tSNE_1, y = tSNE_2, color = Func_anno)) +
+      geom_point(alpha = 0.8, size = 2) + labs(color = "Peptide Functional annotation") +
+      scale_color_manual(values = d3_colors) +
+      theme_bw() + 
+      theme(axis.text.x = element_text(size = 14, color = "black"), axis.title.x = element_text(size = 16, color = "black"),axis.text.y = element_text(size = 14, color = "black"), axis.title.y = element_text(size = 16, color = "black"), legend.title = element_text(size = 18, color = "black"), legend.text = element_text(size = 16, color = "black"), legend.box.just = "right", legend.position = "bottom", legend.justification = "left") + 
+    #guides(color = guide_legend(byrow = TRUE, title.position = "top", override.aes = list(size = 3)))  # 设置图例换行和标题位置
+    guides(color = guide_legend(byrow = TRUE, title.position = "top"))
+  print(myplot)
+  
+  figure_file <- paste0("V52_func_", func_anno_type, "_colored.tiff")
+  ggsave(figure_file, myplot,  height = 12, width = 12, unit = "in")
+  
+  
+  # Saving the plot (Single Protein Source)
+  tiff_file_name <- paste0("V52_func_", func_anno_type, "_colored.tiff")
+  tiff_file <- file.path("figures", "Functional_Map", tiff_file_name)
+  ggsave(tiff_file, myplot, height = 12, width = 12, units = "in", dpi = 300)
+  
+  svg_file_name <- paste0("V52_func_", func_anno_type, "_colored.svg")
+  svg_file <- file.path("figures", "Functional_Map", svg_file_name)
+  ggsave(svg_file, myplot, height = 12, width = 12, units = "in")
+  
+  pdf_file_name <- paste0("V52_func_", func_anno_type, "_colored.pdf")
+  pdf_file <- file.path("figures", "Functional_Map", pdf_file_name)
+  ggsave(pdf_file, myplot, height = 12, width = 12, units = "in")
+  
+  eps_file_name <- paste0("V52_func_", func_anno_type, "_colored.eps")
+  eps_file <- file.path("Figures", "Functional_Map", eps_file_name)
+  ggsave(eps_file, myplot, height = 12, width = 12, units = "in") 
+  
+}
+
+
+
+
+
+# func_anno_types <- c("COG_Family", "COG_Category", "EC", "KEGG_Reaction", "KEGG_ko", "KEGG_Module", "KEGG_Pathway",  "KEGG_TC", "eggNOG_OGs")
+func_anno_types <- c("COG_Family", "COG_Category", "KEGG_Reaction")
+### Zoomed into single speices
+# #Burkholderiaceae Cluster
+# name <- "Burkholderiaceae"
+# x_min <- -45
+# x_max <- -35
+# y_min <- -10
+# y_max <- 30
+
+# # Eggerthellaceae Cluster
+# name <- "Eggerthellaceae"
+# x_min <- 25
+# x_max <- 45
+# y_min <- 5
+# y_max <- 20
+
+# # Enterobacteriaceae Cluster
+# name <- "Enterobacteriaceae"
+# x_min <- -10
+# x_max <- 15
+# y_min <- 30
+# y_max <- 50
+
+# # Multiple taxa cluster1 (Lachnospiraceae)
+# name <- "Lachnospiraceae"
+# x_min <- 20
+# x_max <- 40
+# y_min <- -15
+# y_max <- 0
+
+
+# Multiple taxa cluster2 (Bacteroidaceae)
+name <- "Bacteroidaceae"
+x_min <- -15
+x_max <- 10
+y_min <- -50
+y_max <- -15
+
+selected_scatter_data <- scatter_data %>% filter(tSNE_1 >= x_min & tSNE_1 <= x_max) %>% filter(tSNE_2 >= y_min & tSNE_2 <= y_max)
+nrow(selected_scatter_data)
+
+for (func_anno_type in func_anno_types){
+  # func_anno_type <- "COG_Category"
+  # func_anno_type <- "KEGG_Reaction"
+  # func_anno_type <- "KEGG_ko"
+  # func_anno_type <- "KEGG_Pathway"
+  # func_anno_type <- "KEGG_TC"
+  
+  # Attaching peptide functional annotation to scatter plot  
+  func_scatter_data <- selected_scatter_data %>% dplyr::left_join(pep_func_anno_data %>% select(Peptide, !!sym(func_anno_type)), by = "Peptide")
+  nrow(func_scatter_data)
+  table(func_scatter_data[[func_anno_type]])
+    
+  # Replace NA
+  func_scatter_data <- func_scatter_data %>%
+    mutate(!!sym(func_anno_type) := replace_na(!!sym(func_anno_type), "Unannotated"))
+  
+  # Define unannotated peptides
+  func_scatter_data <- func_scatter_data %>% mutate(!!sym(func_anno_type) := ifelse(!!sym(func_anno_type) == "-",  "Unannotated", !!sym(func_anno_type)))
+  
+  # Get the top function group
+  func_pep_count <- func_scatter_data %>%
+    count(!!sym(func_anno_type), sort = TRUE)
+  print(func_pep_count)
+    top_func <- func_pep_count %>%
+      top_n(13, n) %>%
+      pull(!!sym(func_anno_type))
+    
+  # Only keep top function category
+  func_scatter_data <- func_scatter_data %>%
+    mutate(Func_anno = ifelse(!!sym(func_anno_type) %in% top_func, !!sym(func_anno_type), "Other Functions"))
+  table(func_scatter_data$Func_anno)
+    
+    
+  #Limit the width of figure legend
+  filtered_func_scatter_data <- func_scatter_data
+  filtered_func_scatter_data$Func_anno <- substr(filtered_func_scatter_data$Func_anno, 1, 22)    
+  
+  
+  # ## Removed unannoted peptides and peptides annotated to other functions
+  # # filtered_func_scatter_data <- func_scatter_data
+  # filtered_func_scatter_data <- func_scatter_data %>% filter(Func_anno != "Unannotated") %>% filter(Func_anno != "Other Functions")
+
+    
+  ### Scatter plot
+  # Get distinct function annotations and assign d3 colors
+  category20_colors <- ggsci::pal_d3("category20")(20)
+  unique_funcs <- levels(factor(filtered_func_scatter_data$Func_anno))
+  d3_colors <- category20_colors[1:length(unique_funcs)]
+  names(d3_colors) <- unique_funcs
+  d3_colors["Unannotated"] = "#C7C7C7"
+  d3_colors["Other Functions"] = "#9EDAE5"
+  # d3_colors["Unannotated"] = "#00000000"
+  # d3_colors["Other Functions"] = "#00000000"
+  
+  myplot <- ggplot(filtered_func_scatter_data, aes(x = tSNE_1, y = tSNE_2, color = Func_anno)) +
+      geom_point(alpha = 0.8, size = 3) + labs(color = "Peptide Functional annotation") +
+      scale_color_manual(values = d3_colors) +
+      theme_bw() + 
+      theme(axis.text.x = element_text(size = 14, color = "black"), axis.title.x = element_text(size = 16, color = "black"),axis.text.y = element_text(size = 14, color = "black"), axis.title.y = element_text(size = 16, color = "black"), legend.title = element_text(size = 18, color = "black"), legend.text = element_text(size = 16, color = "black"), legend.position = "bottom", legend.justification = "left") +
+      guides(
+        color = guide_legend(byrow = TRUE, title.position = "top", override.aes = list(size = 3))
+        )  # 设置图例换行和标题位置
+  myplot
+    
+  figure_file <- paste0("V52_func_", func_anno_type, "_Burkholderiaceae_colored.tiff")
+  ggsave(figure_file, myplot,  height = 9, width = 12, unit = "in")
+  
+
+  # Save the plot
+  tiff_file_name <- paste0("V52_func_", func_anno_type, "_", name, "_zoomed_in.tiff")
+  tiff_file <- file.path("figures", "Functional_Map", tiff_file_name)
+  svg_file_name <- paste0("V52_func_", func_anno_type, "_", name, "_zoomed_in.svg")
+  svg_file <- file.path("figures", "Functional_Map", svg_file_name)
+  pdf_file_name <- paste0("V52_func_", func_anno_type, "_", name, "_zoomed_in.pdf")
+  pdf_file <- file.path("figures", "Functional_Map", pdf_file_name)
+  eps_file_name <- paste0("V52_func_", func_anno_type, "_", name, "_zoomed_in.eps")
+  eps_file <- file.path("figures", "Functional_Map", eps_file_name)
+  
+  ggsave(tiff_file, myplot, height = 10, width = 10, units = "in", dpi = 300)
+  ggsave(svg_file, myplot, height = 10, width = 10, units = "in")
+  ggsave(pdf_file, myplot, height = 10, width = 10, units = "in")
+  ggsave(eps_file, myplot, height = 10, width = 10, units = "in")
+}
+```
+
+
+### Figure S7. - Figure S10. Applying peptide abundance correlations to peptide taxonomic source assignment.
+# See codes in Machine_Learning_Peptide_Tax_Assign.Rmd
+
+
+### Figure S11. Linechart plot for OPA and TNPA changes across samples with different treatments. 
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(ggsci)
+library(data.table)
+library(ComplexHeatmap)
+library(viridis)
+
+setwd("../data/Drugs_dataset/")
+
+#setwd("../data/Drugs_dataset/")
+
+
+#individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+individuals <- c("V52")
+#individual <- "V45"
+#individual <- "V46"
+#individual <- "V52"
+
+# tax_name <- "MGYG000000223"
+# tax_name <- "MGYG000004769"
+# tax_name <- "MGYG000002487"
+
+
+for (individual in individuals){
+  
+  print(individual)
+  
+  ### Get the name of Top Genomes from the individual (tax_names)
+  print(individual)
+  infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  
+  ### Read in peptide protein source file
+  pep_prot_source_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_prot_source_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_prot_source_file_name)
+  pep_prot_source <- read.table(pep_prot_source_file, header = TRUE, sep = "\t")
+  pep_prot_source <- pep_prot_source %>% select("Peptide", "Protein_Source")
+  #colnames(pep_prot_source) <- c("Peptide", "Protein_Source")
+  head(pep_prot_source)
+  pep_prot_source$Protein_Count <- str_count(pep_prot_source$Protein_Source, "\\|") + 1
+  head(pep_prot_source$Protein_Count)
+  
+  for (tax_name in tax_names){
+    # ### Read in peptide original intensity (OPA) matrix
+    # correlation_matrix_file_name <- paste0(individual, "_",tax_name, "_raw_peptide_abundance.out")
+    # correlation_matrix_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks",individual, correlation_matrix_file_name)
+    # readin_correlation_matrix <- fread(correlation_matrix_file, sep = "\t")
+    # rownames(readin_correlation_matrix) <- readin_correlation_matrix$Peptide
+  
+    
+    ### Read in peptide taxa-based normalized intensity (TNPA) matrix
+    correlation_matrix_file_name <- paste0(individual, "_",tax_name, "_normalized_peptide_abundance.out")
+    correlation_matrix_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks",individual, correlation_matrix_file_name)
+    readin_correlation_matrix <- fread(correlation_matrix_file, sep = "\t")
+    rownames(readin_correlation_matrix) <- readin_correlation_matrix$Peptide
+    
+    ## Convert into matrix
+    real_readin_correlation_matrix <- subset(readin_correlation_matrix, select = -Peptide)
+    # head(colnames(real_readin_correlation_matrix))
+    # head(rownames(real_readin_correlation_matrix))
+    # nrow(real_readin_correlation_matrix)
+    # ncol(real_readin_correlation_matrix)
+    # Add row names to the matrix
+    correlation_matrix <- as.matrix(real_readin_correlation_matrix)
+    # head(colnames(correlation_matrix))
+    # head(rownames(correlation_matrix))
+    rownames(correlation_matrix) <- rownames(readin_correlation_matrix)
+    head(colnames(correlation_matrix))
+    head(rownames(correlation_matrix))
+    nrow(correlation_matrix)
+    ncol(correlation_matrix)
+    
+    # Convert peptide intensity wide table into long table
+    correlation_matrix <- as.data.frame(correlation_matrix)
+    correlation_matrix$Peptide <- rownames(correlation_matrix)
+    intensity_long_data <- pivot_longer(correlation_matrix, cols = starts_with("Intensity"), names_to = "Sample", values_to = "Intensity")
+    intensity_long_data$Log2_Intensity <- log2(intensity_long_data$Intensity + 1)
+    
+    head(intensity_long_data)
+    org_matrix_long_table <- intensity_long_data
+    
+    ### Selecting peptide pairs with both peptides only have one parent protein
+    # Attaching number of parent proteins to the peptide Peptide 
+    matrix_long_table <- org_matrix_long_table %>%
+      left_join(pep_prot_source %>% select(Peptide, Protein_Count), by = c("Peptide" = "Peptide")) %>%
+      rename(Peptide_Protein_Count = Protein_Count)
+  
+    # Filtering peptides that only have one parent protein
+    filtered_matrix_long_table <- matrix_long_table %>% filter(Peptide_Protein_Count == 1)
+    nrow(filtered_matrix_long_table)
+    
+    # Attaching the parent protein to the filtered peptides (peptide only with one parent protein)
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      left_join(pep_prot_source %>% select(Peptide, Protein_Source), by = c("Peptide" = "Peptide")) %>%
+      rename(Peptide_Protein_Source = Protein_Source)
+    head(filtered_matrix_long_table)
+    
+    # Sta the number of peptides that each protein has
+    protein_pep_count_sta <- as.data.frame(sort(table(filtered_matrix_long_table$Peptide_Protein_Source), decreasing = TRUE))
+    print(head(protein_pep_count_sta,20))
+    
+    #### Select Top proteins with largest number of identified peptides.
+    selected_peptides_prot_sources <- protein_pep_count_sta %>%
+      arrange(desc(Freq)) %>%
+      slice(1:3) %>%
+      distinct(Var1, .keep_all = FALSE)
+    selected_peptides_prot_sources <- c(selected_peptides_prot_sources$Var1)
+    selected_peptides_prot_sources
+  
+    
+    
+    ### Get peptides list of peptides from specific protein and had top non-zero values
+    same_prot_long_table <- filtered_matrix_long_table
+    ## Selecting peptides from specific genomes
+    filtered_same_prot_long_table <- same_prot_long_table %>% filter(Peptide_Protein_Source %in% selected_peptides_prot_sources)
+    head(filtered_same_prot_long_table)
+    nrow(filtered_same_prot_long_table)
+    
+    ## Selecting peptides having top non-zero values
+    # 过滤掉 Log2_Intensity 为 0 的行
+    filtered_non_zero <- filtered_same_prot_long_table %>%
+      filter(Log2_Intensity != 0)
+    
+    # 按 Peptide_Protein_Source 和 Peptide 分组，统计非零 Log2_Intensity 的次数
+    peptide_counts <- filtered_non_zero %>%
+      group_by(Peptide_Protein_Source, Peptide) %>%
+      summarise(non_zero_count = n(), .groups = 'drop')
+    
+    # 对每个 Peptide_Protein_Source，提取非零值最多的三个 Peptide
+    same_prot_pep_sta <- peptide_counts %>%
+      group_by(Peptide_Protein_Source) %>%
+      top_n(2, non_zero_count) %>%
+      arrange(Peptide_Protein_Source, desc(non_zero_count))
+    
+    same_prot_pep_list <- same_prot_pep_sta %>% 
+      select(Peptide) %>% 
+      pull()
+    print(same_prot_pep_list)
+    
+    # same_prot_pep_list <- unique(c(filtered_same_prot_long_table$Peptide))
+    
+    
+    ### Linechart plot peptide OPA/TNPA of selected peptides
+    pep_intensity_data <- readin_correlation_matrix
+    
+    # Select peptide Log2 abundance data of specific peptides
+    filtered_pep_intensity_data <- pep_intensity_data %>% filter(Peptide %in% same_prot_pep_list)
+    head(filtered_pep_intensity_data)
+    nrow(filtered_pep_intensity_data)
+    
+    # Data checking
+    filtered_pep_intensity_data <- filtered_pep_intensity_data %>% left_join(pep_prot_source,by = c("Peptide" = "Peptide"))
+    head(filtered_pep_intensity_data)
+    nrow(filtered_pep_intensity_data)
+    table(filtered_pep_intensity_data$Protein_Source)
+    
+    ### LineChart Plot
+    # # Convert wide table to long table
+    # 将所有 "Intensity" 列转换为 double 类型
+filtered_pep_intensity_data <- filtered_pep_intensity_data %>%
+  mutate(across(starts_with("Intensity"), as.numeric))
+
+    filtered_pep_fc_long_data <- pivot_longer(filtered_pep_intensity_data, cols = starts_with("Intensity"), names_to = "Sample", values_to = "Log2_Intensity")
+    head(filtered_pep_fc_long_data)
+    
+    filtered_pep_fc_long_data <- filtered_pep_fc_long_data %>% mutate(Log2_Intensity = log2(Log2_Intensity + 1))
+  
+    
+    # # Plot linechart of OPA
+    # myplot <- ggplot(data = filtered_pep_fc_long_data, mapping = aes(x = Sample, y = Log2_Intensity, group = Peptide, color = Protein_Source, shape = Peptide)) + geom_line() + geom_point() + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=.5)) + ylab ("Log2 OPA") + ylim(17.5,32.5) + scale_shape_manual(values = c(15, 16, 17, 18, 1, 2, 4,0 ))
+    # 
+    # # Saving the linechart plot of OPA
+    # figure_name <- paste0(individual, "_", tax_name, "_top_prot_pep_OPA_linechart.jpg")
+    # jpeg(figure_name,width = 14.4, height = 6, units = "in", res= 300)
+    # print(myplot)
+    # dev.off()
+    
+    
+    # Plot linechart of TNPA
+    myplot <- ggplot(data = filtered_pep_fc_long_data, mapping = aes(x = Sample, y = Log2_Intensity, group = Peptide, color = Protein_Source, shape = Peptide)) + geom_line() + geom_point() + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=.5)) + ylab ("Log2 TNPA") + ylim(15,32.5) + scale_shape_manual(values = c(15, 16, 17, 18, 1, 2,4,0))
+
+    # Saving the linechart plot of TNPA
+    figure_name <- paste0(individual,"_", tax_name, "_top_prot_pep_TNPA_linechart.jpg")
+    jpeg(figure_name,width = 14.4, height = 6, units = "in", res= 300)
+    print(myplot)
+    dev.off()
+        
+  }
+
+}  
+```
+
+
+### Figure S12. Box plot for the distribution of correlations between OPA and TNPA.
+```{r}
+library(reshape2)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+setwd("../data/Drugs_dataset/")
+
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# tax_names <- c()
+# tax_name <- "MGYG000001300"
+# individual <- "V45"
+
+
+
+
+for (individual in individuals){
+  
+  ### Get the name of Top Genomes from the individual (tax_names)
+  print(individual)
+  infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  correlation_results <- data.frame(Genome = character(), Peptide = character(), PCC = numeric(), SCC = numeric(), Sample_Number = numeric(), stringsAsFactors = FALSE)
+
+  
+  for (tax_name in tax_names){
+    print(tax_name)
+    ### Read in original intensity and convert into long table
+    org_pep_int_file_name <- paste0(individual, "_", tax_name, "_raw_peptide_abundance.out")
+    org_pep_int_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, org_pep_int_file_name)
+    org_pep_int_data <- read.table(org_pep_int_file, header = TRUE, sep = "\t")
+    org_pep_int_long_data <- reshape2::melt(org_pep_int_data, id.vars = c("Peptide"), variable.name = "Sample", value.name = "Original_Intensity")
+    org_pep_int_long_data$Log2_Original_Intensity <- log2(org_pep_int_long_data$Original_Intensity + 1)
+    
+    
+    ### Read in taxa-based normalized intensities and convert into long table
+    norm_pep_int_file_name <- paste0(individual, "_", tax_name, "_normalized_peptide_abundance.out")
+    norm_pep_int_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity","Sparsity02_Networks", individual, norm_pep_int_file_name)
+    norm_pep_int_data <- read.table(norm_pep_int_file, header = TRUE, sep = "\t")
+    norm_pep_int_long_data <- reshape2::melt(norm_pep_int_data, id.vars = c("Peptide"), variable.name = "Sample", value.name = "Normalized_Intensity")
+    norm_pep_int_long_data$Log2_Normalized_Intensity <- log2(norm_pep_int_long_data$Normalized_Intensity + 1)
+    
+    
+    ### Combine intensities together
+    combined_pep_int_long_data <- left_join(org_pep_int_long_data, norm_pep_int_long_data, by = c("Peptide", "Sample"))
+    head(combined_pep_int_long_data)
+    nrow(combined_pep_int_long_data)
+    filtered_combined_pep_int_long_data <- combined_pep_int_long_data %>% filter(Original_Intensity >0 & Normalized_Intensity > 0)
+    nrow(filtered_combined_pep_int_long_data)
+    
+    
+    ### Get all peptides from the genome
+    pep_list <- unique(filtered_combined_pep_int_long_data$Peptide)
+    
+    #unique_pep_list <- unique(filtered_combined_pep_int_long_data$Peptide)
+    
+    #selected_pep <- pep_list[1]
+    for (selected_pep in pep_list){
+      selected_filtered_combined_pep_int_long_data <- filtered_combined_pep_int_long_data %>% filter(Peptide == selected_pep)
+      head(selected_filtered_combined_pep_int_long_data)
+      nrow(selected_filtered_combined_pep_int_long_data)
+      
+      calc_PCC <- cor(selected_filtered_combined_pep_int_long_data$Log2_Original_Intensity, selected_filtered_combined_pep_int_long_data$Log2_Normalized_Intensity, use = "complete.obs", method = "pearson")
+      calc_SCC <- cor(selected_filtered_combined_pep_int_long_data$Log2_Original_Intensity, selected_filtered_combined_pep_int_long_data$Log2_Normalized_Intensity, use = "complete.obs", method = "spearman")
+      sample_num <- nrow(selected_filtered_combined_pep_int_long_data)
+      
+      
+      # Add calculation results to the sta dataframe
+      #correlation_results <- data.frame(Genome = character(), Peptide = character(), PCC = numeric(), SCC = numeric(), stringsAsFactors = FALSE)
+      correlation_results <- rbind(correlation_results, data.frame(Genome = tax_name, Peptide = selected_pep, PCC = calc_PCC,  SCC = calc_SCC, Sample_Number = sample_num))
+    }
+        
+  }
+  
+  
+  # 计算每个Genome的样本大小
+  counts <- correlation_results %>%
+    group_by(Genome) %>%
+    summarise(n = n())
+  
+  # 合并样本大小信息到原始数据框中
+  correlation_results <- merge(correlation_results, counts, by = "Genome")
+  
+  ### Correlation coefficients distribution BoxPlot
+  # 绘制PCC的BoxPlot
+  ggplot(correlation_results, aes(x = Genome, y = PCC, group = Genome)) + 
+    geom_boxplot(width = 0.2, outlier.shape = NA) +
+    theme_bw() +
+    labs(x = "Genome", y = "PCC between OPA and TNPA") +
+    theme(axis.text.x = element_text(size = 10, color = "black", angle = 45, hjust = 1), axis.title.x = element_text(size = 14, color = "black"), axis.text.y = element_text(size = 10, color = "black"), axis.title.y = element_text(size = 14)) +
+    # 添加样本大小标签
+    geom_text(aes(label = paste0("n=", n), y = max(PCC, na.rm = TRUE)), 
+            stat = "identity", position = position_dodge(width = 0.75), vjust = -0.5, color = "black")
+  # Saving Plot  
+  figure_file_name <- paste0(individual, "_OPA_TNPA_PCC_distribution_across_genomes.tiff")
+  output_dir <- "rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/Intensity_correlations"
+  figure_file <- file.path(output_dir, figure_file_name)
+  ggsave(figure_file, width = 12, height = 9, units = "in")
+  
+
+  # 绘制SCC的BoxPlot
+  ggplot(correlation_results, aes(x = Genome, y = SCC)) +
+    geom_boxplot(width = 0.2, outlier.shape = NA) +
+    theme_bw() +
+    labs(x = "Genome", y = "SCC between OPA and TNPA") +
+    theme(axis.text.x = element_text(size = 10, color = "black", angle = 45, hjust = 1), axis.title.x = element_text(size = 14, color = "black"), axis.text.y = element_text(size = 10, color = "black"), axis.title.y = element_text(size = 14)) +
+    # 添加样本大小标签
+    geom_text(aes(label = paste0("n=", n), y = max(PCC, na.rm = TRUE)), 
+            stat = "identity", position = position_dodge(width = 0.75), vjust = -0.5, color = "black")
+  # Saving Plot
+  figure_file_name <- paste0(individual, "_OPA_TNPA_SCC_distribution_across_genomes.tiff")
+  output_dir <- "rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/Intensity_correlations"
+  figure_file <- file.path(output_dir, figure_file_name)
+  ggsave(figure_file, width = 12, height = 9, units = "in")
+  
+  
+  # 绘制来自每个Genome的肽段的Sample Number的分布
+    # 绘制SCC的BoxPlot
+  ggplot(correlation_results, aes(x = Genome, y = Sample_Number)) +
+    geom_boxplot(width = 0.2, outlier.shape = NA) +
+    theme_bw() +
+    labs(x = "Genome", y = "The number of samples with non-zero OPA SCC") +
+    theme(axis.text.x = element_text(size = 10, color = "black", angle = 45, hjust = 1), axis.title.x = element_text(size = 14, color = "black"), axis.text.y = element_text(size = 10, color = "black"), axis.title.y = element_text(size = 14)) +
+    # 添加样本大小标签
+    geom_text(aes(label = paste0("n=", n), y = 1), 
+            stat = "identity", position = position_dodge(width = 0.75), vjust = -0.5, color = "black")
+  # Saving Plot 
+  figure_file_name <- paste0(individual, "_pep_non_zero_OPA_sample_num_across_genomes.tiff")
+  output_dir <- "rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/Intensity_correlations"
+  figure_file <- file.path(output_dir, figure_file_name)
+  ggsave(figure_file, width = 12, height = 9, units = "in")
+  
+}
+```
+
+
+### Figure S13 Scatter plot of SCC calculated based on original intensity (OPA) and taxa-normalized intensity (TNPA).
+```{r}
+library(dplyr)
+library(ggplot2)
+library(data.table)
+library(ggpubr)
+#library(VennDiagram)
+
+
+# setwd("../data/Drugs_dataset/")
+setwd("../data/Drugs_DataSet/")
+
+
+# tax_name <- "MGYG000002438"
+# print(tax_name)
+#individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+#individuals <- c("V47", "V48", "V49", "V52")
+individuals <- c("V52")
+
+# # V52 genomes
+# tax_names <- c("MGYG000000223", "MGYG000000243", "MGYG000002281", "MGYG000002438", "MGYG000002478", "MGYG000002487", "MGYG000002517", "MGYG000002528", "MGYG000002544", "MGYG000004769")
+
+for (individual in individuals){
+  #individual <- "V52"
+  print(individual)
+  
+  ### Get the name of Top Genomes from the individual (tax_names)
+  infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  
+  ### Read in SCC calculated based on the original intensities (SCC of Log2-FC OPA)
+  print("Reading in SCC of original intensities.")
+  original_scc_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+  original_scc_file <- file.path("rm_mbr_individual_pep_scc", original_scc_file_name )
+  original_scc_data <- fread(original_scc_file, sep = "\t")
+  colnames(original_scc_data) <- c("Peptide_1", "Peptide_2", "SCC_of_original_intensities")
+  original_scc_data <- original_scc_data %>%
+    mutate(Peptide_Pair = paste0(pmin(Peptide_1, Peptide_2), "_", pmax(Peptide_1, Peptide_2)))
+  head(original_scc_data)
+  nrow(original_scc_data)
+  
+  
+  # A dataframe to save SCC of all taxa from the individual
+  combined_taxa_norm_scc_data <- data.frame(Peptide_1.x = character(), Peptide_2.x = character(), SCC_of_taxa_normalized_intensities = numeric(), Peptide_Pair = character(), Peptide_1.y = character(), Peptide_2.y = character(), SCC_of_original_intensities = numeric())
+  
+  for (tax_name in tax_names){
+    print (tax_name)
+    
+    ### Read in SCC calculated based on taxa-normalized intensities
+    print("Reading in SCC of normalized intensities.")
+    taxa_norm_scc_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out_SCC_correlation.out")
+    taxa_norm_scc_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity",  "Sparsity02_Networks", individual, "Calculated_SCC", taxa_norm_scc_file_name)
+    
+    
+    # 检查文件是否存在，如果不存在则跳过当前循环
+    if (!file.exists(taxa_norm_scc_file)) {
+      print(paste("File not found:", taxa_norm_scc_file))
+      next
+    }
+    
+    taxa_norm_scc_data <- fread(taxa_norm_scc_file, sep = "\t")
+    
+    colnames(taxa_norm_scc_data) <- c("Peptide_1", "Peptide_2", "SCC_of_taxa_normalized_intensities")
+    taxa_norm_scc_data <- taxa_norm_scc_data %>%
+      mutate(Peptide_Pair = paste0(pmin(Peptide_1, Peptide_2), "_", pmax(Peptide_1, Peptide_2)))
+    head(taxa_norm_scc_data)
+    nrow(taxa_norm_scc_data)
+    
+    
+  
+    ### Combining two SCCs
+    print("Combining two SCC.")
+    taxa_norm_scc_data <- dplyr::inner_join(taxa_norm_scc_data, original_scc_data,  by = "Peptide_Pair")
+    head(taxa_norm_scc_data)
+    nrow(taxa_norm_scc_data)
+    
+    combined_taxa_norm_scc_data <- rbind(combined_taxa_norm_scc_data, taxa_norm_scc_data)
+    
+    ### Scatter Plot
+    print("Preparing scatter plot.")
+    ggscatter(taxa_norm_scc_data, 
+              x = "SCC_of_original_intensities", 
+              y = "SCC_of_taxa_normalized_intensities",
+              add = "reg.line",          
+              conf.int = TRUE,          
+              alpha = 0.3                
+              ) + 
+      xlim (-0.5, 1) +
+      ylim (-0.5, 1) +
+      theme_bw() +  
+      annotate("text", x = -0.2, y = 0.9, label = paste(individual), size = 8) +
+      annotate("text", x = -0.2, y = 0.8, label = paste(tax_name), size = 8) +
+      stat_cor(method = "pearson", label.x = -0.35, label.y = 0.7, size = 8) + 
+      annotate("text", x = -0.2, y = 0.6, label = paste0("n=", format(nrow(taxa_norm_scc_data), big.mark = ",")),
+             size = 8) +  # 修正n显示的位置
+      labs(x = "SCC of OPA Log2-FC", y = "SCC of TNPA Log2-FC") +
+      theme(axis.text.x = element_text(size = 16, color = "black", hjust = 1), axis.title.x = element_text(size = 18, color = "black"), axis.text.y = element_text(size = 16, color = "black"), axis.title.y = element_text(size = 18))
+
+    
+    
+    figure_file_name <- paste0(individual, "_", tax_name, "_", "SCC_correlation", ".tiff")
+    output_dir <- "rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/SCC_correlations"
+    figure_file <- file.path(output_dir, figure_file_name)
+    ggsave(figure_file, width = 12, height = 9, units = "in")
+
+  #combined_taxa_norm_scc_data <- rbind(combined_taxa_norm_scc_data, taxa_norm_scc_data)
+  
+  ### Scatter Plot
+  print("Preparing scatter plot.")
+  ggscatter(combined_taxa_norm_scc_data, 
+            x = "SCC_of_original_intensities", 
+            y = "SCC_of_taxa_normalized_intensities",
+            add = "reg.line",         
+            conf.int = TRUE,           
+            alpha = 0.3                
+            ) + 
+    xlim (-0.5, 1) +
+    ylim (-0.5, 1) +
+    theme_bw() +  
+    annotate("text", x = -0.2, y = 0.9, label = paste(individual), size = 8) +
+    stat_cor(method = "pearson", label.x = -0.35, label.y = 0.8, size = 8) + 
+    annotate("text", x = -0.2, y = 0.7, label = paste0("n=", format(nrow(combined_taxa_norm_scc_data), big.mark = ",")), size = 8) +
+    labs(x = "SCC of OPA Log2-FC", y = "SCC of TNPA Log2-FC") +
+    theme(axis.text.x = element_text(size = 16, color = "black", hjust = 1), axis.title.x = element_text(size = 18, color = "black"), axis.text.y = element_text(size = 16, color = "black"), axis.title.y = element_text(size = 18))
+
+  
+  
+  figure_file_name <- paste0(individual, "_top10_taxa_SCC_correlation", ".tiff")
+  output_dir <- "rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/SCC_correlations"
+  figure_file <- file.path(output_dir, figure_file_name)
+  ggsave(figure_file, width = 12, height = 9, units = "in")
+  
+  }
+    
+}
+```
+
+
+### Figure S14.-Figure S15. Single species peptide abundance correlation networks based on OPA and TNPA. 
+```{r}
+library(igraph)
+library(data.table)
+library(tidyr)
+library(dplyr)
+
+
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/")
+
+
+# List of individuals
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+
+# Top pairs percentage (Set the percentage of removed peptide pairs)
+# rm_percentage = 0.99
+rm_percentage = 0.95
+
+# Set a dataframe to save SCC threshold
+thresholds_results <- data.frame(Individual = as.character(), Tax_Name = as.character(), SCC_Threshold = as.numeric(), stringsAsFactors = FALSE)
+
+
+for (individual in individuals){
+  print(individual)
+  ### Set input file path and output file path
+  # # Input file path (SCC of taxa-normalized intensity)
+  input_dir <- file.path(individual, "Calculated_SCC")
+  # Input file path (SCC of raw intensity)
+  #input_dir <- file.path(individual, "Calculated_SCC_Raw_Intensities")
+  
+  # Set output path/dir
+  output_dir  <- file.path(individual, "Networks_SCC_top5_percent")
+  # Check the existence of the output dir
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir)
+    cat("Output dir created:", output_dir , "\n")
+  } else {
+    cat("Output dir existed:", output_dir , "\n")
+  }
+  
+  
+  ### Get input file list
+  # Get the name of Top Genomes from the individual
+  file_names <- list.files(input_dir)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  for (tax_name in tax_names){
+    #print(tax_name)
+    # Get Top pairs scc threshold
+    correlation_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out_SCC_correlation.out")
+    correlation_file <-  file.path(input_dir, correlation_file_name)
+    correlation_data <- fread(correlation_file, sep = "\t")
+    scc_threshold <- quantile(correlation_data$SCC, rm_percentage, na.rm = TRUE)
+    
+    # Saving top pairs scc thresholds
+    single_threshold_result <- data.frame(Individual = as.character(individual), Tax_Name = as.character(tax_name), SCC_Threshold = as.numeric(scc_threshold), stringsAsFactors = FALSE)
+    thresholds_results <- rbind(thresholds_results, single_threshold_result)
+    
+    
+    ### Read in peptides correlation matrix
+    correlation_matrix_file_name <- paste0(individual,"_", tax_name, "_fold_change_wide.out_SCC_correlation.wide.out")
+    correlation_matrix_file <- file.path(input_dir, correlation_matrix_file_name)
+    
+    readin_correlation_matrix <- fread(correlation_matrix_file, sep = "\t")
+  
+    correlation_matrix <- readin_correlation_matrix[,-1]
+    correlation_matrix <- as.matrix(correlation_matrix)
+    rownames(correlation_matrix) <- readin_correlation_matrix$V1
+    
+    nrow(correlation_matrix)
+    head(rownames(correlation_matrix))
+    ncol(correlation_matrix)
+    head(colnames(correlation_matrix))
+    
+    
+    ### Keep Top percent SCC pairs
+    filtered_correlation_matrix <- correlation_matrix
+    filtered_correlation_matrix[correlation_matrix < scc_threshold] <- 0
+    
+    
+    ### Set random seeds to keep reproducibility of the network plot
+    set.seed(123)
+    
+    # ### Construct the network based on peptide pairs passed certain thresholds
+    #network_file_name <- sprintf("SCC0%d_network.tiff", scc_threshold * 10)
+    network_file_name <- "SCC_top5_networks.tiff"
+    network_file_name <- paste0(individual, "_", tax_name, "_",network_file_name)
+    print(network_file_name)
+    network_file <- file.path(output_dir, network_file_name)
+    tiff(network_file, height = 6, width = 8, units = "in", res = 600)
+    
+    network <- graph_from_adjacency_matrix(filtered_correlation_matrix, weighted=T, mode="undirected", diag=F)
+    V(network)$size <- 4
+    V(network)$label <- NA
+    ### Plot an update network by only keeping nodes with edges
+    update_network <- delete.vertices(network, degree(network) == 0)
+    #V(update_network)$label <- V(update_network)$name
+    plot(update_network)
+    
+    dev.off()
+    
+    
+    ### Sta information of the update network
+    ## Sta the number of nodes in the network
+    num_nodes <- vcount(update_network)
+    num_nodes
+    
+    ## Sta the number of degrees of each node
+    node_degrees <- degree(update_network)
+    # node_degrees
+    node_degrees_frame <- data.frame(Peptide = names(node_degrees), Degree = as.numeric(node_degrees))
+    # nrow(node_degrees_frame)
+    # ncol(node_degrees_frame)
+    head(node_degrees_frame)
+    ## Output the number of degrees of each node
+    node_degrees_frame <- node_degrees_frame[order(-node_degrees_frame$Degree), ]
+    #node_degrees_file_name <- sprintf("_SCC0%d_node_degree_sta.out", scc_threshold * 10)
+    node_degrees_file_name <- "SCC_top5_networks_node_degree_sta.out"
+    node_degrees_file_name <- paste0(individual, "_", tax_name, node_degrees_file_name)
+    node_degrees_file <- file.path(output_dir, node_degrees_file_name)
+    write.table(node_degrees_frame, node_degrees_file, sep = "\t", quote = FALSE, row.names = FALSE)
+    
+    
+    # 检查update_network是否为空
+    if (is.null(update_network) || length(E(update_network)) == 0) {
+      cat("update_network is empty, no edges to output.\n")
+    }
+    
+    else {
+      # 获取边数据框
+      edges <- get.data.frame(update_network, what = "edges")
+      colnames(edges) <- c("Peptide_1", "Peptide_2", "SCC")
+      head(edges)
+      
+      # 构造文件名
+      #edges_file_name <- sprintf("_SCC0%d_network_edges.out", scc_threshold * 10)
+      edges_file_name <- "SCC_top5_network_edges.out"
+      edges_file_name <- paste0(individual, "_", tax_name, edges_file_name)
+      edges_file <- file.path(output_dir, edges_file_name)
+      
+      # 输出边数据框到文件
+      write.table(edges, edges_file, sep = "\t", quote = FALSE, row.names = FALSE)
+      cat("Edges have been successfully written to:", edges_file, "\n")
+    }
+  }
+}
+
+
+threshold_file <- "Top5_pairs_SCC_thresholds.out"
+write.table(thresholds_results, threshold_file, sep = "\t", quote = FALSE, row.names = FALSE)
+
+```
+
+
+### Figure S16. Peptide correlation map for another projects (PXD012724).
+```{r}
+setwd("../data/RapidAIM_dataset/rm_mbr_individual_pep_scc/")
+library(tidyverse)
+library(tsne)
+library(data.table)
+library(Rtsne)
+library(ggpubr)
+
+
+individuals <- c("V1", "V20", "V22", "V23", "V24", "V25")
+
+
+# Set output path/dir
+output_dir  <- "tSNE_plot"
+# Check the existence of the output dir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("Output dir created:", output_dir , "\n")
+} else {
+  cat("Output dir existed:", output_dir , "\n")
+}
+
+
+individual <- "V20"
+for (individual in individuals){
+  ## Read in calculated SCC results
+  # infile_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+  # infile <- infile_name
+  # # Readin file of peptide pairs with high PCC
+  # df <- fread(infile)
+  # nrow(df)
+  # head(df)
+  # # Convert long table into wide matrix data
+  # matrix_data <- df %>%
+  #   spread(key = Peptide_2, value = SCC, fill = 0) %>%
+  #   column_to_rownames(var = "Peptide_1") %>%
+  #   as.matrix()
+  # head(matrix_data)
+  
+  print(individual)
+  infile_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.wide.out")
+  infile <- infile_name
+  
+  matrix_data <- fread(infile)
+  head(colnames(matrix_data))
+  ncol(matrix_data)
+  head(rownames(matrix_data))
+  nrow(matrix_data)
+  
+  matrix_rownames <- matrix_data[[1]]
+  matrix_data <- matrix_data[, -1]
+  matrix_data <- as.matrix(matrix_data)
+  rownames(matrix_data) <- matrix_rownames
+  
+  head(colnames(matrix_data))
+  ncol(matrix_data)
+  head(rownames(matrix_data))
+  nrow(matrix_data)
+  
+  
+  ## Fast calculation of tSNE
+  duplicate_rows <- duplicated(matrix_data)
+  matrix_data <- matrix_data[!duplicate_rows, ]
+  nrow(matrix_data)
+  print(nrow(matrix_data))
+  ##########Modify the perplexity for tSNE calculation
+  set.seed(123)
+  print("Calculating tSNE")
+  tsne_result <- Rtsne(matrix_data, num_threads = 8, perplexity = 30)
+  ggscatter(as.data.frame(tsne_result$Y), x= "V1", y="V2")
+  
+  
+  ########## Get and output the peptide list
+  pep_list <- rownames(matrix_data)
+  pep_list_name <- paste0(individual, "_filtered_tsne_matrix_pep.out")
+  write.table(pep_list, pep_list_name, col.names = FALSE, row.names = FALSE, quote = FALSE)
+  pep_list <- as.data.frame(pep_list)
+  colnames(pep_list) <- "Peptide"
+  
+  ########## Attaching peptide annotation to the pep_list
+  ########## Read in peptide annotation data
+  pep_anno_file_path <- "../data/RapidAIM_dataset/rm_mbr_individual_pep_taxa_refine/"
+  pep_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_anno_file <- file.path(pep_anno_file_path, pep_anno_file_name)
+  pep_anno_data <- read.table(pep_anno_file, sep="\t",header = TRUE)
+
+  
+  org_pep_anno_data<- left_join(pep_list, pep_anno_data, by = "Peptide") 
+  # Modify taxa anno data
+  org_pep_anno_data[is.na(org_pep_anno_data)] <- "Unannotated"
+  org_pep_anno_data[org_pep_anno_data == "-"] <- "Unannotated"
+  head(org_pep_anno_data)
+  
+  
+  # Output tSNE plot with taxa annotation at different levels.
+  tax_levels <- c("Phylum", "Class", "Order", "Family",
+                  "Genus", "Genome", "Species")
+  tax_level <- "Phylum"
+  for (tax_level in tax_levels){
+    org_pep_anno_data %>%
+    count(!!sym(tax_level)) %>%
+    arrange(desc(n))  %>% 
+    slice(1:9) %>%
+    pull(!!sym(tax_level)) -> top_taxa
+    
+    tax_pep_anno_data <- org_pep_anno_data %>%
+    mutate(Top_taxa = ifelse(!!sym(tax_level) %in% top_taxa, as.character(!!sym(tax_level)), "Other taxa"))
+    
+    # Attaching taxa info to tSNE results
+    colnames(tsne_result$Y) <- c ("tSNE_1", "tSNE_2")
+    tsne_data <- data.frame(sample = pep_list, Type = tax_pep_anno_data$Top_taxa, tsne_result$Y)
+    ######### Output tSNE results
+    tsne_file <- paste0(individual, "_SCC_pairs_",tax_level,"_tSNE_data.out")
+    write.table(tsne_data, tsne_file, col.names = TRUE, row.names = FALSE, quote = FALSE)    
+    
+    ggscatter(tsne_data, x = "tSNE_1", y = "tSNE_2", color = "Type",alpha = 0.7, palette = "npg")
+    ########## Coregulated peptide pairs or all peptide pairs results
+    figure_name <- paste0(individual, "_All_SCC_map_", tax_level,".tiff")
+    ggsave(figure_name, width = 8, height = 6, units = "in") 
+  }
+  
+  
+  ########## Moving generated files to tSNE plot directories
+  pep_out_files <- list.files(path = ".", pattern = "_pep\\.out$")
+  tsne_out_files <- list.files(path = ".", pattern = "_tSNE_data\\.out$")
+  tiff_files <- list.files(path = ".", pattern = "\\.tiff$")
+  
+  file.rename(pep_out_files, file.path(output_dir,pep_out_files))
+  file.rename(tsne_out_files, file.path(output_dir,tsne_out_files))
+  file.rename(tiff_files, file.path(output_dir,tiff_files))
+}
+
+
+
+
+
+### Recolor tSNE plots (Family_Level)
+library(ggplot2)
+library(ggsci)
+
+setwd("../data/RapidAIM_dataset/rm_mbr_individual_pep_scc/tSNE_plot/")
+
+individuals <- c("V1","V20", "V22","V23", "V24", "V25")
+
+
+
+for (individual in individuals){
+  tsne_file <- paste0(individual, "_SCC_pairs_Family_tSNE_data.out")
+  figure_file <- paste0(individual, "_Peptide_family_tSNE_data.tiff")
+  tsne_data<- read.table(tsne_file, header = TRUE, sep = " ")
+  my_plot <- ggplot(tsne_data, aes(x = tSNE_1, y = tSNE_2, color = Type)) +
+      geom_point(alpha = 0.8) +
+      scale_color_manual(values = c(
+          "Enterobacteriaceae" = "#D62728", "Lachnospiraceae" = "#FFBB78",
+          "Ruminococcaceae" = "#9467BD", "Eggerthellaceae" = "#8C564B",
+          "Bacteroidaceae" = "#2CA02C", "Burkholderiaceae" = "#E377C2",
+          "Erysipelotrichaceae" = "#FF7F0EFF", "Tannerellaceae" = "#BCBD22",
+          "Oscillospiraceae" = "#1F77B4FF", "Bifidobacteriaceae" = "#FF9896",
+          "Fusobacteriaceae" = "#C49C4F", "Rikenellaceae" = "#98DF8A",
+          "Acidaminococcaceae" = "#C5B0D5", "Anaerotignaceae" = "#C5B0D5",
+          "Coriobacteriaceae" = "#AEC7E8", "Erysipelatoclostidiaceae" = "#9EDAE5",
+          "Selenomonadaceae" = "#DBDB8D",
+          "Unannotated" = "#7F7F7F", "Other_taxa" = "#17BECF")) +
+      theme_bw()
+  
+  my_plot
+  ggsave(figure_file, my_plot,  height = 9, width = 12, unit = "in")
+}
+
+```

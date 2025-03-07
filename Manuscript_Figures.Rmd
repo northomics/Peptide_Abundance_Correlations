@@ -1,0 +1,3188 @@
+---
+title: "Manuscript_Figures"
+author: "ZhongzhiSun"
+date: "2024-11-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = normalizePath("../data/Drugs_dataset"))
+```
+
+
+### Figure 1. Workflow, generated with Powerpoint and Biorendor.
+
+
+### Figure 2A. Peptide correlation maps (tSNE plot) across different individuals.
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggsci)
+
+### Read in tSNE scatter plot data
+scatter_file_name <- "V52_SCC_pairs_Family_tSNE_data.out"
+scatter_file <- file.path("rm_mbr_individual_pep_scc", "tSNE_plot", scatter_file_name)
+scatter_data <- read.table(scatter_file, header = TRUE, sep = " ")
+
+my_plot <- ggplot(scatter_data, aes(x = tSNE_1, y = tSNE_2, color = Type)) +
+    geom_point(alpha = 0.8) +
+    scale_color_manual(values = c(
+        "Enterobacteriaceae" = "#D62728", "Lachnospiraceae" = "#FFBB78",
+        "Ruminococcaceae" = "#9467BD", "Eggerthellaceae" = "#8C564B",
+        "Bacteroidaceae" = "#2CA02C", "Burkholderiaceae" = "#E377C2",
+        "Erysipelotrichaceae" = "#FF7F0EFF", "Tannerellaceae" = "#BCBD22",
+        "Oscillospiraceae" = "#1F77B4FF", "Bifidobacteriaceae" = "#FF9896",
+        "Fusobacteriaceae" = "#C49C4F", "Rikenellaceae" = "#98DF8A",
+        "Acidaminococcaceae" = "#C5B0D5",
+        "Unannotated" = "#7F7F7F", "Other_taxa" = "#17BECF")) +
+    theme_bw() + 
+    labs(color = "Peptide Taxa Source") + 
+    theme(
+        axis.text.x = element_text(size = 12, color = "black"),
+        axis.title.x = element_text(size = 14, color = "black"),
+        axis.text.y = element_text(size = 12, color = "black"),
+        axis.title.y = element_text(size = 14, color = "black"),
+        legend.title = element_text(size = 12, color = "black"),
+        legend.text = element_text(size = 10, color = "black")
+    )
+
+# Save plots in different formats
+tiff_file_name <- paste0(individual, "_taxa_boxed_tSNE_plot.tiff")
+svg_file_name <- paste0(individual, "_taxa_boxed_tSNE_plot.svg")
+pdf_file_name <- paste0(individual, "_taxa_boxed_tSNE_plot.pdf")
+eps_file_name <- paste0(individual, "_taxa_boxed_tSNE_plot.eps")
+
+ggsave(tiff_file_name, my_plot, height = 9, width = 12, units = "in", dpi = 300)
+ggsave(svg_file_name, my_plot, height = 9, width = 12, units = "in")
+ggsave(pdf_file_name, my_plot, height = 9, width = 12, units = "in")
+ggsave(eps_file_name, my_plot, height = 9, width = 12, units = "in")
+
+### Read in refined peptide taxonomic annotation
+pep_tax_anno_file_name <- "V52_rm_mbr_quantified_peptides_refined_anno.out"
+pep_tax_anno_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_tax_anno_file_name)
+pep_tax_anno_data <- read.table(pep_tax_anno_file, header = TRUE, sep = "\t")
+```
+
+
+
+
+### Figure 2B. Barplot for the number of identified peptides across different individuals
+```{r}
+library(ggplot2)
+library(scales)
+
+# Read peptide statistics data
+pep_data <- read.table("selected_sparsity_sta.txt", sep = "\t", header = TRUE)
+
+# Set factor levels for peptide types
+pep_data$Type_of_peptides <- factor(pep_data$Type_of_peptides, 
+    levels = c("Peptides identified in at least 1 sample",
+               "Peptides identified in ≥20% of total samples"))
+
+# Create barplot
+myplot <- ggplot(pep_data, aes(x = Individual, y = Peptides, fill = Type_of_peptides)) +
+    geom_bar(stat = "identity", position = position_dodge()) +
+    labs(x = "Individual", y = "Number of identified peptides", fill = "Type of Peptides") + 
+    theme_bw() + 
+    theme(
+        axis.title.x = element_text(size = 14, color = "black"),
+        axis.title.y = element_text(size = 14, color = "black"),
+        axis.text.x = element_text(size = 12, color = "black"), 
+        axis.text.y = element_text(size = 12, color = "black"),
+        legend.position = "bottom",
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12, lineheight = 1.2)
+    ) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.05)), labels = comma) +
+    scale_fill_manual(values = c("#1F77B499", "#FA807299")) + 
+    guides(fill = guide_legend(nrow = 2, byrow = TRUE))
+
+# Save plots in different formats
+tiff_file_name <- "Pep_num_sta.tiff"
+svg_file_name <- "Pep_num_sta.svg"
+pdf_file_name <- "Pep_num_sta.pdf"
+eps_file_name <- "Pep_num_sta.eps"
+
+ggsave(tiff_file_name, myplot, width = 6, height = 4, units = "in", dpi = 300)
+ggsave(svg_file_name, myplot, width = 6, height = 4, units = "in")
+ggsave(pdf_file_name, myplot, width = 6, height = 4, units = "in")
+ggsave(eps_file_name, myplot, width = 6, height = 4, units = "in")
+
+```
+
+
+### Figure 3A. Density plot for SCC of all peptide pairs.
+```{r pressure, echo=FALSE}
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(data.table)
+
+setwd("../data/Drugs_dataset/")
+
+individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+#individual <- "V52"
+#individuals <- c("V47", "V48", "V49", "V52")
+
+
+for (individual in individuals){
+  ### Read in calculated SCC file
+  scc_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+  scc_file <- file.path("rm_mbr_individual_pep_scc", scc_file_name)
+  org_matrix_long_table <- fread(scc_file, sep = "\t")
+  head(org_matrix_long_table)
+  nrow(org_matrix_long_table)
+  
+  
+  myplot <- ggplot(data = as.data.frame(org_matrix_long_table), aes(x = SCC)) +
+      geom_density(color = "#1F77B4FF", fill = "#1F77B4FF", alpha = 0.4) +  # Adjusted for clarity
+      labs(x = "SCC of peptide pairs", y = "Density") +
+      theme_bw() +
+      scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.1))) +
+      scale_x_continuous(limits = c(-1, 1), expand = expansion(mult = c(0,0))) + 
+      theme(plot.title = element_text(hjust = 0.5, size = 18),
+            axis.title.x = element_text(size = 14, color = "black"),
+            axis.title.y = element_text(size = 14, color = "black"),
+            axis.text.x = element_text(size = 12, color = "black"), 
+            axis.text.y = element_text(size = 12, color = "black"),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(), 
+            plot.margin = margin(0, 15, 0, 0, "pt"))
+  
+  myplot
+  
+  # Sving the plot
+  
+  tiff_file_name <- paste0(individual, "_all_pep_pair_SCC.tiff")
+  ggsave(tiff_file_name, myplot, width = 6, height = 4, units = "in", dpi = 300)
+  svg_file_name <- paste0(individual, "_all_pep_pair_SCC.svg")
+  ggsave(svg_file_name, myplot, width = 6, height = 4, units = "in")
+  pdf_file_name <- paste0(individual, "_all_pep_pair_SCC.pdf")
+  ggsave(pdf_file_name, myplot, width = 6, height = 4, units = "in")
+  eps_file_name <- paste0(individual, "_all_pep_pair_SCC.eps")
+  ggsave(eps_file_name, myplot, width = 6, height = 4, units = "in")
+  
+  print(myplot)
+}
+```
+
+
+
+### Figure 3B. Vionlin plot comparing the SCC of peptides from the same or different protein sources.
+```{r}
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(data.table)
+
+setwd("../data/Drugs_dataset")
+
+individual <- "V52"
+individuals <- c("V52", "V45", "V46", "V47", "V48", "V49")
+
+### Comparing of peptides from the same or different proteins
+for (individual in individuals){
+  print(individual)
+  ### Read in peptide protein source file
+  pep_prot_source_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_prot_source_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_prot_source_file_name)
+  pep_prot_source <- read.table(pep_prot_source_file, header = TRUE, sep = "\t")
+  pep_prot_source <- pep_prot_source %>% select(Peptide, Protein_Source)
+  colnames(pep_prot_source) <- c("Peptide", "Protein_Source")
+  head(pep_prot_source)
+  # Sta the number of proteins sharing the peptide
+  pep_prot_source$Protein_Count <- str_count(pep_prot_source$Protein_Source, "\\|") + 1
+  head(pep_prot_source$Protein_Count)
+  
+  
+  ### Read in calculated SCC file
+  scc_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+  scc_file <- file.path("rm_mbr_individual_pep_scc", scc_file_name)
+  org_matrix_long_table <- fread(scc_file, sep = "\t")
+  
+  
+  ### Comparing peptide pairs with both peptides only have one parent protein
+  # Attaching number of parent proteins to peptide sequences 
+  #Peptide_1
+  matrix_long_table <- org_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Count), by = c("Peptide_1" = "Peptide")) %>%
+    rename(Peptide_1_Protein_Count = Protein_Count)
+  #Peptide_2
+  matrix_long_table <- matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Count), by = c("Peptide_2" = "Peptide")) %>%
+    rename(Peptide_2_Protein_Count = Protein_Count)
+  head(matrix_long_table)
+  nrow(matrix_long_table)
+  
+  # ### Without filtering number of parent proteins
+  # filtered_matrix_long_table <- matrix_long_table
+  
+  ## Filtering number of parent proteins
+  # Filtered pairs of unique peptides (Both peptides only have one parent protein)
+  filtered_matrix_long_table <- matrix_long_table %>% filter(Peptide_1_Protein_Count == 1 & Peptide_2_Protein_Count == 1)
+  nrow(filtered_matrix_long_table)
+  
+  # Attaching parent protein to the peptide in peptide pairs
+  #Peptide_1
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Source), by = c("Peptide_1" = "Peptide")) %>%
+    rename(Peptide_1_Protein_Source = Protein_Source)
+  #Peptide_2
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Source), by = c("Peptide_2" = "Peptide"))%>%
+    rename(Peptide_2_Protein_Source = Protein_Source)
+  
+  # Remove peptides without protein sources
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+  filter(!is.na(Peptide_1_Protein_Source) & !is.na(Peptide_2_Protein_Source))
+  head(filtered_matrix_long_table)
+  
+  # Add a column to check peptide pairs protein source status (same protein/different proteins)
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    mutate(Protein_Source_Status = if_else(Peptide_1_Protein_Source == Peptide_2_Protein_Source, 
+                                           "Same protein", 
+                                           "Different proteins"))
+  head(filtered_matrix_long_table)
+  
+  # Output the number of each group
+  print(table(filtered_matrix_long_table$Protein_Source_Status))
+  counts <- as.data.frame(table(filtered_matrix_long_table$Protein_Source_Status))
+  names(counts) <- c("Protein_Source_Status", "n")
+  counts$n_formatted <- format(counts$n, big.mark = ",", scientific = FALSE)
+  
+  # p value calculation (single tail)
+  wilcox_test <- wilcox.test(SCC ~ Protein_Source_Status, data = filtered_matrix_long_table, alternative = "less")
+  p_value <- wilcox_test$p.value
+  p_value_formatted <- format(p_value, scientific = TRUE, digits = 3)
+  print(p_value)
+  print(p_value_formatted)
+
+  ### Stastistical SCC compare
+  small_group <- filtered_matrix_long_table %>% filter(Protein_Source_Status == "Same protein") %>% select(SCC) %>% pull()
+  large_group <- filtered_matrix_long_table %>% filter(Protein_Source_Status == "Different proteins") %>% select(SCC) %>% pull()
+  print(mean(small_group))
+  print(mean(large_group))
+  n <- length(small_group)
+  
+  # Calculate Cohen's d
+  mean_diff <- mean(small_group) - mean(large_group)
+  pooled_sd <- sqrt((var(small_group) + var(large_group)) / 2)
+  cohen_d <- mean_diff / pooled_sd
+  print(paste("Cohen's d:", cohen_d))
+  
+  # Calculate Bargha and Delaney A efect size measure (library(effsize))
+  vd_a <- VD.A(small_group, large_group)
+  print(vd_a)
+  vd_a_formatted <- format(vd_a$estimate, digits = 2)
+  
+  # Calculate average p-value
+  p_values <- replicate(100, {
+    sampled_large_group <- sample(large_group, n)
+    wilcox.test(small_group, sampled_large_group, alternative = "greater")$p.value
+  })
+  mean_p_value <- mean(p_values)
+  print(paste("Average p-value:", mean_p_value))
+  
+  
+  # Box and Violin plot
+  myplot <- ggplot(filtered_matrix_long_table, aes(x = Protein_Source_Status, y = SCC)) +
+    geom_violin(aes(fill = Protein_Source_Status)) + ylim(-1,1.35) + 
+    geom_boxplot(width = 0.2, fill = "white") +
+    labs(title = paste0(individual),
+         x = "Peptide Pairs Protein Source Status",
+         y = "SCC", fill = "Peptide Pairs\nProtein Source Status") +
+    theme_bw() + theme(plot.title = element_text(hjust = 0.5, size = 18),
+                       axis.title.x = element_text(size = 14, color = "black"),
+                       axis.title.y = element_text(size = 14, color = "black"),
+                       axis.text.x = element_text(size = 12, color = "black"), 
+                       axis.text.y = element_text(size = 12, color = "black"), 
+                       legend.title = element_text(size = 14, color = "black"),
+                       legend.text = element_text(size = 12, color = "black")) + 
+    scale_fill_manual(values = c("Same protein" = "#56B4E9", "Different proteins" = "#E69F00")) +
+    geom_text(data = counts, aes(x = Protein_Source_Status, y = -0.8, label = paste(n_formatted, "pairs")), 
+              position = position_dodge(width = 0.9), vjust = -0.5, size = 4) + 
+    stat_compare_means(method = "wilcox.test", label = "p.signif", size = 6, label.x = 1.5, label.y = 0.90) +
+    annotate("text", x = 1.5, y = 1.25, label = paste0("Effect size = ", vd_a_formatted, "\n(Vargha and Delaney A)"), size = 4)
+  
+  print(myplot)
+  
+
+  
+  # Saving the plot (Single Protein Source)
+  tiff_file_name <- paste0(individual, "_single_protein_source_SCC_compare.tiff")
+  tiff_file <- file.path("Figures", "Same_Prot_SCC", tiff_file_name)
+  ggsave(tiff_file, myplot, width = 6, height = 4, units = "in", dpi = 300)
+  
+  svg_file_name <- paste0(individual, "_single_protein_source_SCC_compare.svg")
+  svg_file <- file.path("Figures", "Same_Prot_SCC", svg_file_name)
+  ggsave(svg_file, myplot, width = 6, height = 4, units = "in")
+  
+  pdf_file_name <- paste0(individual, "_single_protein_source_SCC_compare.pdf")
+  pdf_file <- file.path("Figures", "Same_Prot_SCC", pdf_file_name)
+  ggsave(pdf_file, myplot, width = 6, height = 4, units = "in")
+  
+  eps_file_name <- paste0(individual, "_single_protein_source_SCC_compare.eps")
+  eps_file <- file.path("Figures", "Same_Prot_SCC", eps_file_name)
+  ggsave(eps_file, myplot, width = 6, height = 4, units = "in")
+  
+  
+  
+  # # Saving the plot (All Protein Source)
+  # tiff_file_name <- paste0(individual, "_all_protein_source_SCC_compare.tiff")
+  # tiff_file <- file.path("Figures", "Same_Prot_SCC", tiff_file_name)
+  # ggsave(tiff_file, myplot, width = 6, height = 4, units = "in", dpi = 300)
+  # 
+  # svg_file_name <- paste0(individual, "_all_protein_source_SCC_compare.svg")
+  # svg_file <- file.path("Figures", "Same_Prot_SCC", svg_file_name)
+  # ggsave(svg_file, myplot, width = 6, height = 4, units = "in")
+  # 
+  # pdf_file_name <- paste0(individual, "_all_protein_source_SCC_compare.pdf")
+  # pdf_file <- file.path("Figures", "Same_Prot_SCC", pdf_file_name)
+  # ggsave(pdf_file, myplot, width = 6, height = 4, units = "in")
+  # 
+  # eps_file_name <- paste0(individual, "_all_protein_source_SCC_compare.eps")
+  # eps_file <- file.path("Figures", "Same_Prot_SCC", eps_file_name)
+  # ggsave(eps_file, myplot, width = 6, height = 4, units = "in")
+}
+```
+
+
+### Figure 3C. Vionlin plot comparing the SCC of peptides from the same or different taxa sources.
+```{r}
+
+setwd("../data/Drugs_dataset")
+
+#tax_levels <- c("Phylum","Class","Order","Family","Genus","Genome")
+
+tax_levels <- c("Genome")
+tax_level <- "Genome"
+
+individuals <- c("V52", "V45", "V46", "V47", "V48", "V49")
+
+#individuals <- c("V49")
+
+for (individual in individuals){
+  print(individual)
+  ### Read in peptide protein source file
+  pep_prot_source_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_prot_source_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_prot_source_file_name)
+  pep_prot_source <- read.table(pep_prot_source_file, header = TRUE, sep = "\t")
+  pep_prot_source <- pep_prot_source
+  head(pep_prot_source)
+  # Sta the number of proteins sharing the peptide
+  pep_prot_source$Protein_Count <- str_count(pep_prot_source$Protein_Source, "\\|") + 1
+  head(pep_prot_source$Protein_Count)
+  
+  
+  ### Read in calculated SCC file
+  scc_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+  scc_file <- file.path("rm_mbr_individual_pep_scc", scc_file_name)
+  org_matrix_long_table <- fread(scc_file, sep = "\t")
+  filtered_matrix_long_table <- org_matrix_long_table
+  
+  for (tax_level in tax_levels){
+    print(tax_level)
+    
+    ### Attaching parent protein and taxonomic source to the peptide in peptide pairs
+    #Peptide_1
+    filtered_matrix_long_table <- org_matrix_long_table %>%
+      left_join(pep_prot_source %>% select(Peptide, !!sym(tax_level), Protein_Source, Protein_Count), by = c("Peptide_1" = "Peptide")) %>%
+      rename(Peptide_1_Tax_Source = !!sym(tax_level)) %>%
+      rename(Peptide_1_Protein_Source = Protein_Source) %>%
+      rename(Peptide_1_Protein_Count = Protein_Count)
+      
+    #Peptide_2
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      left_join(pep_prot_source %>% select(Peptide, !!sym(tax_level), Protein_Source, Protein_Count), by = c("Peptide_2" = "Peptide"))%>%
+      rename(Peptide_2_Tax_Source = !!sym(tax_level)) %>% 
+      rename(Peptide_2_Protein_Source = Protein_Source) %>%
+      rename(Peptide_2_Protein_Count = Protein_Count)
+    
+    ### Without filtering number of parent proteins
+    # filtered_matrix_long_table <- filtered_matrix_long_table
+    
+    ## Filtering number of parent proteins
+    # Filtered pairs of unique peptides (Both peptides only have one parent protein)
+    filtered_matrix_long_table <- filtered_matrix_long_table %>% filter(Peptide_1_Protein_Count == 1 & Peptide_2_Protein_Count == 1)
+    nrow(filtered_matrix_long_table)
+    
+
+    # Remove peptides without protein sources
+    print(nrow(filtered_matrix_long_table))
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      filter(!is.na(Peptide_1_Protein_Source) & !is.na(Peptide_2_Protein_Source))
+    head(filtered_matrix_long_table)
+    print(nrow(filtered_matrix_long_table))
+    
+    
+    ### Add a column to check peptide pairs taxa source status (same taxa/different taxa)
+    nrow(filtered_matrix_long_table)
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      filter(!is.na(Peptide_1_Tax_Source) & !is.na(Peptide_2_Tax_Source))
+    nrow(filtered_matrix_long_table)
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      filter(Peptide_1_Tax_Source != "-" & Peptide_2_Tax_Source != "-")
+    nrow(filtered_matrix_long_table)
+    
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      mutate(Peptide_Taxa_Source_Status = if_else(Peptide_1_Tax_Source == Peptide_2_Tax_Source, 
+                                             "Same taxon", 
+                                             "Different taxa"))
+    head(filtered_matrix_long_table)
+    nrow(filtered_matrix_long_table)
+
+
+    # Output the number of each group
+    print(table(filtered_matrix_long_table$Peptide_Taxa_Source_Status))
+    counts <- as.data.frame(table(filtered_matrix_long_table$Peptide_Taxa_Source_Status))
+    names(counts) <- c("Peptide_Taxa_Source_Status", "n")
+    counts$n_formatted <- format(counts$n, big.mark = ",", scientific = FALSE)
+    
+    
+    # p value calculation (single tail)
+    wilcox_test <- wilcox.test(SCC ~ Peptide_Taxa_Source_Status, data = filtered_matrix_long_table, alternative = "less")
+    p_value <- wilcox_test$p.value
+    p_value_formatted <- format(p_value, scientific = TRUE, digits = 3)
+    print(p_value)
+    print(p_value_formatted)
+    
+    
+    # Stastistical SCC compare
+    small_group <- filtered_matrix_long_table %>% filter(Peptide_Taxa_Source_Status == "Same taxon") %>% select(SCC) %>% pull()
+    large_group <- filtered_matrix_long_table %>% filter(Peptide_Taxa_Source_Status == "Different taxa") %>% select(SCC) %>% pull()
+    n <- length(small_group)
+    print(paste("Small group mean:", mean(small_group)))
+    print(paste("Large group mean:", mean(large_group)))
+    
+    # Calculate Bargha and Delaney A efect size measure (library(effsize))
+    vd_a <- VD.A(small_group, large_group)
+    vd_a
+    print(paste("VD.A:", vd_a))
+    vd_a_formatted = format(vd_a$estimate, digits = 2)
+    
+    # Calculate average p-value
+    p_values <- replicate(100, {
+      sampled_large_group <- sample(large_group, n)
+      wilcox.test(small_group, sampled_large_group, alternative = "greater")$p.value
+    })
+    mean_p_value <- mean(p_values)
+    print(paste("Average p-value:", mean_p_value))
+    
+  
+    ### Box and violin plot
+    figure_title <- paste(individual, tax_level, "Level")
+    #print(figure_title)
+    
+    myplot <- ggplot(filtered_matrix_long_table, aes(x = Peptide_Taxa_Source_Status, y = SCC)) +
+      geom_violin(aes(fill = Peptide_Taxa_Source_Status)) + ylim(-1,1.35) + 
+      geom_boxplot(width = 0.2, fill = "white") +
+      labs(title = figure_title,
+           x = "Peptide Pairs Taxa Source Status",
+           y = "SCC", fill = "Peptide Pairs\nTaxa Source Status") +
+      theme_bw() + theme(plot.title = element_text(hjust = 0.5, size = 18),
+                         axis.title.x = element_text(size = 14, color = "black"),
+                         axis.title.y = element_text(size = 14, color = "black"),
+                         axis.text.x = element_text(size = 12, color = "black"), 
+                         axis.text.y = element_text(size = 12, color = "black"), 
+                         legend.title = element_text(size = 14, color = "black"),
+                         legend.text = element_text(size = 12, color = "black")) + 
+      scale_fill_manual(values = c("Same taxon" = "#56B4E9", "Different taxa" = "#E69F00")) +
+      geom_text(data = counts, aes(x = Peptide_Taxa_Source_Status, y = -0.8, label = paste(n_formatted, "pairs")), 
+                position = position_dodge(width = 0.9), vjust = -0.5, size = 4) +
+      stat_compare_means(method = "wilcox.test", label = "p.signif", size = 6, label.x = 1.5, label.y = 0.90) + 
+      annotate("text", x = 1.5, y = 1.25, label = paste0("Effect size = ", vd_a_formatted, "\n(Vargha and Delaney A)"), size = 4)
+    print(myplot)
+    
+    
+
+    ### Saving the plot
+    tiff_file_name <- paste0(individual, "_", tax_level, "_level_pep_SCC_compare.tiff")
+    tiff_file <- file.path("Figures", "Same_Tax_SCC", tiff_file_name)
+    ggsave(tiff_file, myplot, width = 6, height = 4, units = "in", dpi = 300)
+    
+    svg_file_name <- paste0(individual, "_", tax_level, "_level_pep_SCC_compare.svg")
+    svg_file <- file.path("Figures", "Same_Tax_SCC", svg_file_name)
+    ggsave(svg_file, myplot, width = 6, height = 4, units = "in")
+    
+    pdf_file_name <- paste0(individual, "_", tax_level, "_level_pep_SCC_compare.pdf")
+    pdf_file <- file.path("Figures", "Same_Tax_SCC", pdf_file_name)
+    ggsave(pdf_file, myplot, width = 6, height = 4, units = "in")
+    
+    eps_file_name <- paste0(individual, "_", tax_level, "_level_pep_SCC_compare.eps")
+    eps_file <- file.path("Figures", "Same_Tax_SCC", eps_file_name)
+    ggsave(eps_file, myplot, width = 6, height = 4, units = "in")
+  }
+}
+```
+
+
+
+### Figure 3D. Violin plot Comparing SCC of peptide pairs from different taxa, same taxon different proteins and same taxon same protein sources.
+```{r}
+
+tax_levels <- c("Genome")
+
+all_pep_pair_sta <- data.frame(Individual = as.character(), Tax_Level = as.character(), Pair_Type = as.character(), Pair_Number = as.numeric())
+
+individuals <- c("V52", "V45", "V46", "V47", "V48", "V49")
+
+# individuals <- c("V52")
+
+for (individual in individuals){
+  print(individual)
+
+  ## Read in peptide taxa and protein source file
+  pep_prot_source_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_prot_source_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_prot_source_file_name)
+  pep_prot_source <- read.table(pep_prot_source_file, header = TRUE, sep = "\t")
+  head(pep_prot_source)
+  
+
+  ### Read in calculated SCC file
+  scc_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+  scc_file <- file.path("rm_mbr_individual_pep_scc", scc_file_name)
+  org_matrix_long_table <- fread(scc_file, sep = "\t")
+  head(org_matrix_long_table)
+  nrow(org_matrix_long_table)
+  
+  ## Sta the number of proteins sharing the peptide
+  pep_prot_source$Protein_Count <- str_count(pep_prot_source$Protein_Source, "\\|") + 1
+  head(pep_prot_source$Protein_Count)
+  
+  
+  ### Attaching number of parent proteins to peptide sequences 
+  #Peptide_1
+  matrix_long_table <- org_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Count), by = c("Peptide_1" = "Peptide")) %>%
+    rename(Peptide_1_Protein_Count = Protein_Count)
+  #Peptide_2
+  matrix_long_table <- matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Count), by = c("Peptide_2" = "Peptide")) %>%
+    rename(Peptide_2_Protein_Count = Protein_Count)
+  head(matrix_long_table)
+  nrow(matrix_long_table)
+  
+  # # ### Without filtering number of parent proteins
+  # #Selecting peptide pairs with both peptides having protein source annotations
+  # filtered_matrix_long_table <- matrix_long_table %>% filter(Peptide_1_Protein_Count >= 1 & Peptide_2_Protein_Count >= 1)
+  # nrow(filtered_matrix_long_table)
+  
+  ### Filtering number of parent proteins
+  #Selecting peptide pairs with both peptides having protein source annotations
+  filtered_matrix_long_table <- matrix_long_table %>% filter(Peptide_1_Protein_Count == 1 & Peptide_2_Protein_Count == 1)
+  nrow(filtered_matrix_long_table)
+  
+  
+  ## Attaching peptide parent protein to the peptide in peptide pairs
+  #Peptide_1
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Source), by = c("Peptide_1" = "Peptide")) %>%
+    rename(Peptide_1_Protein_Source = Protein_Source)
+  #Peptide_2
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    left_join(pep_prot_source %>% select(Peptide, Protein_Source), by = c("Peptide_2" = "Peptide"))%>%
+    rename(Peptide_2_Protein_Source = Protein_Source)
+  
+  # Remove peptides without protein sources
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    filter(!is.na(Peptide_1_Protein_Source) & !is.na(Peptide_2_Protein_Source))
+  head(filtered_matrix_long_table)
+  nrow(filtered_matrix_long_table)
+  
+  # Add a column to check peptide pairs protein source status (same protein/different proteins)
+  filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    mutate(Protein_Source_Status = if_else(Peptide_1_Protein_Source == Peptide_2_Protein_Source, 
+                                           "Same protein", 
+                                           "Different proteins"))
+  head(filtered_matrix_long_table)
+  
+  # Output the number of each group
+  print(table(filtered_matrix_long_table$Protein_Source_Status))
+  
+  org_filtered_matrix_long_table <- filtered_matrix_long_table
+  
+  
+  for (tax_level in tax_levels){
+    print(tax_level)
+    ### Attaching peptide taxonomic sources to the peptide in peptide pairs
+    #Peptide_1
+    tax_filtered_matrix_long_table <- org_filtered_matrix_long_table %>%
+      left_join(pep_prot_source %>% select(Peptide, !!sym(tax_level)), by = c("Peptide_1" = "Peptide")) %>%
+      rename(Peptide_1_Tax_Source = !!sym(tax_level))
+    #Peptide_2
+    tax_filtered_matrix_long_table <- tax_filtered_matrix_long_table %>%
+      left_join(pep_prot_source %>% select(Peptide, !!sym(tax_level)), by = c("Peptide_2" = "Peptide"))%>%
+      rename(Peptide_2_Tax_Source = !!sym(tax_level))
+    
+    ### Add a column to check peptide pairs taxa source status (same taxa/different taxa)
+    nrow(matrix_long_table)
+    tax_filtered_matrix_long_table <- tax_filtered_matrix_long_table %>%
+      filter(!is.na(Peptide_1_Tax_Source) & !is.na(Peptide_2_Tax_Source))
+    nrow(tax_filtered_matrix_long_table)
+    tax_filtered_matrix_long_table <- tax_filtered_matrix_long_table %>%
+      filter(Peptide_1_Tax_Source != "-" & Peptide_2_Tax_Source != "-")
+    nrow(tax_filtered_matrix_long_table)
+    
+    tax_filtered_matrix_long_table <- tax_filtered_matrix_long_table %>%
+      mutate(Peptide_Taxa_Source_Status = if_else(Peptide_1_Tax_Source == Peptide_2_Tax_Source, 
+                                             "Same taxon", 
+                                             "Different taxa"))
+    head(tax_filtered_matrix_long_table)
+    nrow(tax_filtered_matrix_long_table)
+    print(table(tax_filtered_matrix_long_table$Peptide_Taxa_Source_Status))
+    #print(tax_level)
+    
+    head(tax_filtered_matrix_long_table)
+    print("tax_filtered_matrix_long_table")
+    print(nrow(tax_filtered_matrix_long_table))
+    
+    
+    # Add a column to check both peptide taxonomic and protein source status
+    tax_func_filtered_matrix_long_table <- tax_filtered_matrix_long_table %>%
+      mutate(Peptide_Combined_Source_Status = case_when(
+        Peptide_1_Protein_Source == Peptide_2_Protein_Source & Peptide_1_Tax_Source == Peptide_2_Tax_Source ~ "SGSP", #"SPST"
+        Peptide_1_Protein_Source != Peptide_2_Protein_Source & Peptide_1_Tax_Source == Peptide_2_Tax_Source ~ "SGDP", #"DPST"
+        Peptide_1_Protein_Source != Peptide_2_Protein_Source & Peptide_1_Tax_Source != Peptide_2_Tax_Source ~ "DGDP", #"DPDT"
+        TRUE ~ "Other"  # This line handles any cases that don't match the above conditions
+      ))
+    
+    print("tax_func_filtered_matrix_long_table")
+    head(tax_func_filtered_matrix_long_table)
+    print(nrow(tax_func_filtered_matrix_long_table))
+    print(table(tax_func_filtered_matrix_long_table$Peptide_Combined_Source_Status))
+    
+    
+    # Sta the number of different types of peptide pairs
+    all_pairs_num <- nrow(tax_func_filtered_matrix_long_table)
+    
+    protein_status_count <- tax_func_filtered_matrix_long_table %>%
+      group_by(Peptide_Combined_Source_Status) %>%
+      summarise(Pair_Number = n())
+    
+    protein_status_count$Pair_Number_formatted <- format(protein_status_count$Pair_Number, big.mark = ",", scientific = FALSE)
+    
+    single_pep_pair_sta <- protein_status_count %>% 
+      mutate(Individual = individual, Tax_Level = tax_level, Pair_Type = Peptide_Combined_Source_Status) %>%
+      select(Individual, Tax_Level, Pair_Type, Pair_Number)
+    
+    single_pep_pair_sta <- single_pep_pair_sta %>%
+      add_row(Individual = individual, Tax_Level = tax_level, Pair_Type = "Total", Pair_Number = all_pairs_num)
+    
+    all_pep_pair_sta <- rbind(all_pep_pair_sta, single_pep_pair_sta)
+    
+    
+    
+    # Stastistical SCC compare
+    small_group <- tax_func_filtered_matrix_long_table %>% filter(Peptide_Combined_Source_Status == "SGDP") %>% select(SCC) %>% pull()
+    large_group <- tax_func_filtered_matrix_long_table %>% filter(Peptide_Combined_Source_Status == "DGDP") %>% select(SCC) %>% pull()
+    sgsp_group <- tax_func_filtered_matrix_long_table %>% filter(Peptide_Combined_Source_Status == "SGSP") %>% select(SCC) %>% pull()
+    
+    n <- length(small_group)
+    print(paste("Small group mean:", mean(small_group)))
+    print(paste("Large group mean:", mean(large_group)))
+    print(paste("SGSP group mean:", mean(sgsp_group)))
+    
+    # Calculate Bargha and Delaney A efect size measure (library(effsize))
+    # Between SGDP and DGDP
+    vd_a_1 <- VD.A(small_group, large_group)
+    vd_a_1
+    print(paste("VD.A:", vd_a_1))
+    vd_a_1_formatted <- format(vd_a_1$estimate, digits = 2)
+    
+    # Between SGDP and SGSP
+    vd_a_2 <- VD.A(small_group, sgsp_group)
+    vd_a_2
+    print(paste("VD.A:", vd_a_2))
+    vd_a_2_formatted <- format(vd_a_2$estimate, digits = 2)
+    
+    
+    # Set groups to show statistical significants
+    #my_comparisons <- list(c("DGDP", "SGDP"), c("DGDP", "SGSP"), c("SGDP", "SGSP"))
+    my_comparisons <- list(c("DGDP", "SGDP"), c("SGDP", "SGSP"))
+    
+    # Box and Violin Plot
+    figure_title <- paste(individual, tax_level)
+    myplot <- ggplot(tax_func_filtered_matrix_long_table, aes(x = Peptide_Combined_Source_Status, y = SCC)) +
+      geom_violin(aes(fill = Peptide_Combined_Source_Status)) + ylim(-1,1.65) + 
+      geom_boxplot(width = 0.2, fill = "white") +
+      labs(title = figure_title,
+           x = "Peptide Pairs Taxa and Functional Source Status",
+           y = "SCC", fill = "Peptide Pairs Taxa and\nFunctional Source Status") +
+      theme_bw() +
+      # scale_fill_manual(values = c("DPDT" = "#E69F00", "DPST" = "#009E73", "SPST" = "#56B4E9")) +
+      scale_fill_manual(values = c("DGDP" = "#E69F00", "SGDP" = "#009E73", "SGSP" = "#56B4E9")) +
+      geom_text(data = protein_status_count, aes(x = Peptide_Combined_Source_Status , y = -0.8, label = paste(Pair_Number_formatted, "pairs")), 
+                position = position_dodge(width = 0.9), vjust = -0.5) +
+      theme(plot.title = element_text(hjust = 0.5, size = 18),
+                axis.title.x = element_text(size = 14, color = "black"),
+                axis.title.y = element_text(size = 14, color = "black"),
+                axis.text.x = element_text(size = 12, color = "black"),
+                axis.text.y = element_text(size = 12, color = "black"),
+                #panel.grid.major = element_blank(),
+                #panel.grid.minor = element_blank(),
+                #plot.margin = margin(0, 15, 0, 0, "pt")
+            ) +
+      stat_compare_means(comparisons = my_comparisons, method = "wilcox.test", label = "p.signif", size = 6, label.y = c(0.90, 1.00)) +
+      annotate("text", x = 1.5, y = 1.55, label = paste0("Effect size = ", vd_a_1_formatted), size = 4) +
+      annotate("text", x = 2.5, y = 1.55, label = paste0("Effect size = ", vd_a_2_formatted), size = 4) +
+      annotate("text", x = 2, y = 1.4, label = "(Vargha and Delaney A)", size = 4)
+    myplot
+      
+    #print(myplot)
+    
+    
+    ### Saving the plot
+    tiff_file_name <- paste0(individual, "_",tax_level, "_and_prot_source_SCC_compare.tiff")
+    tiff_file <- file.path("Figures", "Same_Tax_Diff_Prot_SCC", tiff_file_name)
+    ggsave(tiff_file, myplot, width = 7.5, height = 4, units = "in", dpi = 300)
+    
+    svg_file_name <- paste0(individual, "_",tax_level, "_and_prot_source_SCC_compare.svg")
+    svg_file <- file.path("Figures", "Same_Tax_Diff_Prot_SCC", svg_file_name)
+    ggsave(svg_file, myplot, width = 7.5, height = 4, units = "in")
+    
+    pdf_file_name <- paste0(individual, "_",tax_level, "_and_prot_source_SCC_compare.pdf")
+    pdf_file <- file.path("Figures", "Same_Tax_Diff_Prot_SCC", pdf_file_name)
+    ggsave(pdf_file, myplot, width = 7.5, height = 4, units = "in")
+    
+    eps_file_name <- paste0(individual, "_",tax_level, "_and_prot_source_SCC_compare.eps")
+    eps_file <- file.path("Figures", "Same_Tax_Diff_Prot_SCC", eps_file_name)
+    ggsave(eps_file, myplot, width = 7.5, height = 4, units = "in")
+  }    
+}
+
+
+### Output the sta of the number of peptide pairs
+sta_file <- file.path("Figures", "Same_Tax_Diff_Prot_SCC", "Same_Taxon_Pairs_Num_Sta.out")
+write.table(all_pep_pair_sta, sta_file, sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE) 
+```
+
+
+### Figure 3E. - 3F. Vionlin plot comparing the SCC of peptides from the same or different functional categories
+```{r}
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(data.table)
+
+setwd("../data/Drugs_dataset")
+
+
+individuals <- c("V52", "V45", "V46", "V47", "V48", "V49")
+
+
+#func_category <- "GOs"
+
+func_categories <- c("COG_Category", "COG_Family","GOs", "KEGG_Reaction", "EC")
+#func_categories <- c("COG_Category", "COG_Family")
+
+### Comparing SCCs of peptides from the same or different functional categories
+for (individual in individuals){
+  print(individual)
+  ### Read in peptide protein source file
+  pep_prot_source_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_prot_source_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_prot_source_file_name)
+  pep_prot_source <- read.table(pep_prot_source_file, header = TRUE, sep = "\t")
+  pep_prot_source <- pep_prot_source %>% select(Peptide, Protein_Source)
+  colnames(pep_prot_source) <- c("Peptide", "Protein_Source")
+  head(pep_prot_source)
+  # Sta the number of proteins sharing the peptide
+  pep_prot_source$Protein_Count <- str_count(pep_prot_source$Protein_Source, "\\|") + 1
+  head(pep_prot_source$Protein_Count)
+  
+  ### Read in peptide functional annotation file
+  pep_func_source_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_func_anno.txt")
+  pep_func_source_file <- file.path("rm_mbr_individual_pep_taxa_refine", "Refined_functional_anno", pep_func_source_file_name)
+  pep_func_source <- fread(pep_func_source_file, header = TRUE, sep = "\t")
+  # Extract COG Family from eggNOG_OGs
+  pep_func_source <- pep_func_source %>%
+    mutate(COG_Family = str_extract(eggNOG_OGs, "COG\\d+")) %>%
+    mutate(COG_Family = ifelse(is.na(COG_Family), "-", COG_Family))
+  #pep_func_source <- pep_func_source %>% select(Peptide, !!sym(func_category))
+  #colnames(pep_func_source) <- c("Peptide", "Protein_Source")
+  head(pep_func_source)
+  
+  ### Read in calculated SCC file
+  scc_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+  scc_file <- file.path("rm_mbr_individual_pep_scc", scc_file_name)
+  org_matrix_long_table <- fread(scc_file, sep = "\t")
+  
+  
+  for (func_category in func_categories){
+    print(func_category)
+    ### Comparing peptide pairs with both peptides only have one parent protein
+    # Attaching number of parent proteins to peptide sequences 
+    #Peptide_1
+    matrix_long_table <- org_matrix_long_table %>%
+      left_join(pep_prot_source %>% select(Peptide, Protein_Count), by = c("Peptide_1" = "Peptide")) %>%
+      rename(Peptide_1_Protein_Count = Protein_Count)
+    #Peptide_2
+    matrix_long_table <- matrix_long_table %>%
+      left_join(pep_prot_source %>% select(Peptide, Protein_Count), by = c("Peptide_2" = "Peptide")) %>%
+      rename(Peptide_2_Protein_Count = Protein_Count)
+    head(matrix_long_table)
+    nrow(matrix_long_table)
+    
+    # ### Without filtering number of parent proteins
+    # filtered_matrix_long_table <- matrix_long_table
+    
+    ## Filtering number of parent proteins
+    # Filtered pairs of unique peptides (Both peptides only have one parent protein)
+    filtered_matrix_long_table <- matrix_long_table %>% filter(Peptide_1_Protein_Count == 1 & Peptide_2_Protein_Count == 1)
+    nrow(filtered_matrix_long_table)
+    
+    # Attaching functional category annotation to the peptide in peptide pairs
+    #Peptide_1
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      left_join(pep_func_source %>% select(Peptide, !!sym(func_category)), by = c("Peptide_1" = "Peptide")) %>%
+      rename(Peptide_1_Functional_Source = !!sym(func_category))
+    #Peptide_2
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      left_join(pep_func_source %>% select(Peptide, !!sym(func_category)), by = c("Peptide_2" = "Peptide"))%>%
+      rename(Peptide_2_Functional_Source = !!sym(func_category))
+    
+    # # Remove peptides without protein sources
+    # filtered_matrix_long_table <- filtered_matrix_long_table %>%
+    # filter(!is.na(Peptide_1_Protein_Source) & !is.na(Peptide_2_Protein_Source))
+    # head(filtered_matrix_long_table)
+    
+    # Remove peptides without functional source annotations
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      filter(!is.na(Peptide_1_Functional_Source) & !is.na(Peptide_2_Functional_Source)) %>%
+      filter(Peptide_1_Functional_Source != "-" & Peptide_2_Functional_Source != "-")
+      
+    head(filtered_matrix_long_table)
+    nrow(filtered_matrix_long_table)
+    
+    # Add a column to check peptide pairs protein source status (same protein/different proteins)
+    filtered_matrix_long_table <- filtered_matrix_long_table %>%
+      mutate(Protein_Source_Status = if_else(Peptide_1_Functional_Source == Peptide_2_Functional_Source, 
+                                             "Same category", 
+                                             "Different categories"))
+    head(filtered_matrix_long_table)
+    
+    # Output the number of each group
+    print(table(filtered_matrix_long_table$Protein_Source_Status))
+    counts <- as.data.frame(table(filtered_matrix_long_table$Protein_Source_Status))
+    names(counts) <- c("Protein_Source_Status", "n")
+    counts$n_formatted <- format(counts$n, big.mark = ",", scientific = FALSE)
+    
+    
+    # p value calculation (single tail)
+    wilcox_test <- wilcox.test(SCC ~ Protein_Source_Status, data = filtered_matrix_long_table, alternative = "less")
+    p_value <- wilcox_test$p.value
+    p_value_formatted <- format(p_value, scientific = TRUE, digits = 3)
+    print(p_value)
+    print(p_value_formatted)
+    
+    # Stastistical SCC compare
+    small_group <- filtered_matrix_long_table %>% filter(Protein_Source_Status == "Same category") %>% select(SCC) %>% pull()
+    large_group <- filtered_matrix_long_table %>% filter(Protein_Source_Status == "Different categories") %>% select(SCC) %>% pull()
+    n <- length(small_group)
+    print(paste("Small group mean:", mean(small_group)))
+    print(paste("Large group mean:", mean(large_group)))
+    
+    # Calculate Bargha and Delaney A efect size measure (library(effsize))
+    vd_a <- VD.A(small_group, large_group)
+    vd_a
+    print(paste("VD.A:", vd_a))
+    vd_a_formatted <- format(vd_a$estimate, digits = 2)
+    
+    # Calculate average p-value
+    p_values <- replicate(100, {
+      sampled_large_group <- sample(large_group, n)
+      wilcox.test(small_group, sampled_large_group, alternative = "greater")$p.value
+    })
+    mean_p_value <- mean(p_values)
+    print(paste("Average p-value:", mean_p_value))
+    
+    
+    
+    
+    # Box and Violin plot
+    myplot <- ggplot(filtered_matrix_long_table, aes(x = Protein_Source_Status, y = SCC)) +
+      geom_violin(aes(fill = Protein_Source_Status)) + ylim(-1,1.35) + 
+      geom_boxplot(width = 0.2, fill = "white") +
+      labs(title = paste(individual, func_category),
+           x = "Peptide Pairs Functional Source Status",
+           y = "SCC", fill = "Peptide Pairs\nFunctional Source Status") +
+      theme_bw() + theme(plot.title = element_text(hjust = 0.5, size = 18),
+                         axis.title.x = element_text(size = 14, color = "black"),
+                         axis.title.y = element_text(size = 14, color = "black"),
+                         axis.text.x = element_text(size = 12, color = "black"), 
+                         axis.text.y = element_text(size = 12, color = "black"), 
+                         legend.title = element_text(size = 14, color = "black"),
+                         legend.text = element_text(size = 12, color = "black")) + 
+      scale_fill_manual(values = c("Same category" = "#56B4E9", "Different categories" = "#E69F00")) +
+      scale_x_discrete(labels = c("Same category" = "Same\ncategory", "Different categories" = "Different\ncategories")) + # Add line breaks
+      geom_text(data = counts, aes(x = Protein_Source_Status, y = -0.8, label = paste(n_formatted, "pairs")), 
+                position = position_dodge(width = 0.9), vjust = -0.5, size = 4) +
+      #+ stat_compare_means(method = "wilcox.test", label = "p.format", size = 8)
+      stat_compare_means(method = "wilcox.test", label = "p.signif", size = 6, label.x = 1.5, label.y = 0.85) +
+      annotate("text", x = 1.5, y = 1.25, label = paste0("Effect size = ", vd_a_formatted, "\n(Vargha and Delaney A)"), size = 4)
+    
+    #print(myplot)
+    
+  
+    
+    # Saving the plot (Single Protein Source)
+    tiff_file_name <- paste0(individual, "_", func_category, "_func_SCC_compare.tiff")
+    tiff_file <- file.path("Figures", "Same_Func_SCC", tiff_file_name)
+    ggsave(tiff_file, myplot, width = 6, height = 4, units = "in", dpi = 300)
+    
+    svg_file_name <- paste0(individual, "_", func_category, "_func_SCC_compare.svg")
+    svg_file <- file.path("Figures", "Same_Func_SCC", svg_file_name)
+    ggsave(svg_file, myplot, width = 6, height = 4, units = "in")
+    
+    pdf_file_name <- paste0(individual, "_", func_category, "_func_SCC_compare.pdf")
+    pdf_file <- file.path("Figures", "Same_Func_SCC", pdf_file_name)
+    ggsave(pdf_file, myplot, width = 6, height = 4, units = "in")
+    
+    eps_file_name <- paste0(individual, "_", func_category, "_func_SCC_compare.eps")
+    eps_file <- file.path("Figures", "Same_Func_SCC", eps_file_name)
+    ggsave(eps_file, myplot, width = 6, height = 4, units = "in")    
+  }
+
+}
+```
+
+
+### Figure 4A. Peptide correlation maps (tSNE plot) clolored at family-level peptide taxonomics annotations.
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggsci)
+
+setwd("../data/Drugs_dataset")
+
+#individuals <- c("V52", "V45", "V46", "V47", "V48", "V49")
+
+###### Boxed global tSNE plots
+individuals <- c("V52")
+individual <- "V52"
+
+### Read in tSNE scatter data
+scatter_file_name <- paste0(individual, "_SCC_pairs_Family_tSNE_data.out")
+scatter_file <- file.path("rm_mbr_individual_pep_scc", "tSNE_plot", scatter_file_name)
+scatter_data <- read.table(scatter_file, header = TRUE, sep = " ")
+head(scatter_data)
+nrow(scatter_data)
+
+# Scatter plot
+my_plot <- ggplot(scatter_data, aes(x = tSNE_1, y = tSNE_2, color = Type)) +
+    geom_point(alpha = 0.8, size = 2) +
+    scale_color_manual(values = c(
+        "Enterobacteriaceae" = "#D62728", "Lachnospiraceae" = "#FFBB78",
+        "Ruminococcaceae" = "#9467BD", "Eggerthellaceae" = "#8C564B",
+        "Bacteroidaceae" = "#2CA02C", "Burkholderiaceae" = "#E377C2",
+        "Erysipelotrichaceae" = "#FF7F0EFF", "Tannerellaceae" = "#BCBD22",
+        "Oscillospiraceae" = "#1F77B4FF", "Bifidobacteriaceae" = "#FF9896",
+        "Fusobacteriaceae" = "#C49C4F", "Rikenellaceae" = "#98DF8A",
+        "Acidaminococcaceae" = "#C5B0D5",
+        "Unannotated" = "#7F7F7F", "Other_taxa" = "#17BECF")) +
+    theme_bw() + labs(color = "Peptide Taxa Source") + 
+    ### Burkholderiaceae Cluster (steelblue)
+    geom_rect(aes(xmin = -45, xmax = -35, ymin = -10, ymax = 30), fill = "transparent", color = "black", linewidth = 1.2, linetype = "dashed") +
+    ### Eggerthellaceae  Cluster (steelblue)
+    geom_rect(aes(xmin = 25, xmax = 45, ymin = 5, ymax = 20), fill = "transparent", color = "black", linewidth = 1.2, linetype = "dashed") +
+    ### Lachnospiraceae Cluster (#990000)
+    geom_rect(aes(xmin = 20, xmax = 40, ymin = -15, ymax = 0), fill = "transparent", color = "black", linewidth = 1.2, linetype = "dashed") +
+    ### Bacteroidaceae Cluster (#990000)
+    geom_rect(aes(xmin = -15, xmax = 10, ymin = -50, ymax = -15), fill = "transparent", color = "black", linewidth = 1.2, linetype = "dashed") +
+    theme(axis.text.x = element_text(size = 14, color = "black"), axis.title.x = element_text(size = 16, color = "black"),axis.text.y = element_text(size = 14, color = "black"), axis.title.y = element_text(size = 16, color = "black"), legend.title = element_text(size = 18, color = "black"), legend.text = element_text(size = 16, color = "black"), legend.position = "bottom", legend.justification = "left") +
+  guides(color = guide_legend(nrow = 2, byrow = TRUE, title.position = "top", override.aes = list(size = 3)))  # Set legend line break
+my_plot
+
+#Saving plot
+tiff_file_name <- paste0(individual, "_taxa_boxed_tSNE_plot.tiff")
+tiff_file <- file.path("Figures", "tSNE_plots", tiff_file_name)
+svg_file_name <- paste0(individual, "_taxa_boxed_tSNE_plot.svg")
+svg_file <- file.path("Figures", "tSNE_plots", svg_file_name)
+pdf_file_name <- paste0(individual, "_taxa_boxed_tSNE_plot.pdf")
+pdf_file <- file.path("Figures", "tSNE_plots", pdf_file_name)
+eps_file_name <- paste0(individual, "_taxa_boxed_tSNE_plot.eps")
+eps_file <- file.path("Figures", "tSNE_plots", eps_file_name)
+
+ggsave(tiff_file, my_plot, height =12, width = 12, units = "in", dpi = 300)
+ggsave(svg_file, my_plot, height =12, width = 12, units = "in")
+ggsave(pdf_file, my_plot, height =12, width = 12, units = "in")
+ggsave(eps_file, my_plot, height =12, width = 12, units = "in")
+
+```
+
+
+### Figure 4B. - 4E.  Zoomed in peptide correlation maps (tSNE plot)
+```{r}
+# Read in refined peptide taxonomic annotation file
+pep_tax_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+pep_tax_anno_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_tax_anno_file_name)
+pep_tax_anno_data <- read.table(pep_tax_anno_file , header = TRUE, sep = "\t")
+head(pep_tax_anno_data)
+
+
+# Set zoomed in clusters
+clusters <- list(
+  list(
+    name = "Burkholderiaceae",
+    x_min = -45,
+    x_max = -35,
+    y_min = -10,
+    y_max = 30,
+    top_genomes = c("MGYG000001294", "MGYG000003022"),
+    color_mapping = c(
+      "MGYG000001294" = "#D62728",
+      "MGYG000003022" = "#1F77B4FF",
+      "Other Genomes" = "#FFBB78",
+      "Unannotated" = "grey"
+    )
+  ),
+  
+  list(
+    name = "Eggerthellaceae",
+    x_min = 25,
+    x_max = 45,
+    y_min = 5,
+    y_max = 20,
+    top_genomes = c("MGYG000002544", "MGYG000002487"),
+    color_mapping = c(
+      "MGYG000002544" = "#D62728",
+      "MGYG000002487" = "#1F77B4FF",
+      "Other Genomes" = "#FFBB78",
+      "Unannotated" = "grey"
+    )
+  ),
+  
+  list(
+    name = "Enterobacteriaceae",
+    x_min = -10,
+    x_max = 15,
+    y_min = 30,
+    y_max = 50,
+    top_genomes = c("MGYG000002506", "MGYG000002494", "MGYG000002323"),
+    color_mapping = c(
+      "MGYG000002506" = "#D62728",
+      "MGYG000002494" = "#1F77B4FF",
+      "MGYG000002323" = "#8C564B", 
+      "Other Genomes" = "#FFBB78",
+      "Unannotated" = "grey"
+    )
+  ),
+  
+  list(
+    name = "Lachnospiraceae",
+    x_min = 20,
+    x_max = 40,
+    y_min = -15,
+    y_max = 0,
+    top_genomes = c("MGYG000002528", "MGYG000000212", "MGYG000001658"),
+    color_mapping = c(
+      "MGYG000002528" = "#D62728",
+      "MGYG000000212" = "#1F77B4FF",
+      "MGYG000001658" = "#8C564B",
+      "Other Genomes" = "#FFBB78",
+      "Unannotated" = "grey"
+    )
+  ),
+  
+  list(
+    name = "Bacteroidaceae",
+    x_min = -15,
+    x_max = 10,
+    y_min = -50,
+    y_max = -15,
+    top_genomes = c("MGYG000002281", "MGYG000000243"),
+    color_mapping = c(
+      "MGYG000002281" = "#D62728",
+      "MGYG000000243" = "#1F77B4FF",
+      "Other Genomes" = "#FFBB78",
+      "Unannotated" = "grey"
+    )
+  )
+)
+
+#cluster <- clusters[[4]]
+
+for (cluster in clusters) {
+  # Extract cluster information
+  name <- cluster$name
+  x_min <- cluster$x_min
+  x_max <- cluster$x_max
+  y_min <- cluster$y_min
+  y_max <- cluster$y_max
+  top_genomes <- cluster$top_genomes
+  color_mapping <- cluster$color_mapping
+
+  
+  # Select data for the cluster
+  selected_scatter_data <- scatter_data %>%
+    filter(tSNE_1 >= x_min & tSNE_1 <= x_max) %>%
+    filter(tSNE_2 >= y_min & tSNE_2 <= y_max)
+  
+  # Add annotation to peptides
+  selected_scatter_data <- selected_scatter_data %>%
+    left_join(pep_tax_anno_data %>% select(Peptide, Genome), by = "Peptide") %>%
+    mutate(Genome = replace_na(Genome, "-"))
+  
+  # Update genome annotations
+  selected_scatter_data <- selected_scatter_data %>%
+    mutate(
+      Update_Genome = ifelse(Genome %in% top_genomes, Genome, "Other Genomes"),
+      Update_Genome = ifelse(Genome == "-", "Unannotated", Update_Genome)
+    )
+  
+  # Optional: Print counts for verification
+  cat("\nCluster:", name, "\n")
+  print(table(selected_scatter_data$Update_Genome))
+  
+  
+  # Create the plot
+  myplot <- ggplot(selected_scatter_data, aes(x = tSNE_1, y = tSNE_2, color = Update_Genome)) +
+    geom_point(alpha = 0.8, size = 3) +
+    #labs(color = "Peptide Genome Source", title = paste0(name, " Cluster")) +
+    labs(color = "Peptide Genome Source") +
+    scale_color_manual(values = color_mapping) +
+    theme_bw() +
+    theme(
+      #plot.title = element_text(hjust = 0.5, size = 16),
+      axis.text.x = element_text(size = 14, color = "black"),
+      axis.title.x = element_text(size = 16, color = "black"),
+      axis.text.y = element_text(size = 14, color = "black"),
+      axis.title.y = element_text(size = 16, color = "black"),
+      legend.title = element_text(size = 18, color = "black"),
+      legend.text = element_text(size = 16, color = "black"),
+      legend.position = "bottom",
+      legend.justification = "left"
+    ) +
+    guides(
+        color = guide_legend(nrow = 2, byrow = TRUE, title.position = "top", override.aes = list(size = 3))
+    )  # Set legend line break and title position
+  print(myplot)
+  
+  # Save the plot
+  tiff_file_name <- paste0(individual, "_", name, "_zoomed_in.tiff")
+  tiff_file <- file.path("Figures", "tSNE_plots", tiff_file_name)
+  svg_file_name <- paste0(individual, "_", name, "_zoomed_in.svg")
+  svg_file <- file.path("Figures", "tSNE_plots", svg_file_name)
+  pdf_file_name <- paste0(individual, "_", name, "_zoomed_in.pdf")
+  pdf_file <- file.path("Figures", "tSNE_plots", pdf_file_name)
+  eps_file_name <- paste0(individual, "_", name, "_zoomed_in.eps")
+  eps_file <- file.path("Figures", "tSNE_plots", eps_file_name)
+  
+  ggsave(tiff_file, myplot, height = 8, width = 8, units = "in", dpi = 300)
+  ggsave(svg_file, myplot, height = 8, width = 8, units = "in")
+  ggsave(pdf_file, myplot, height = 8, width = 8, units = "in")
+  ggsave(eps_file, myplot, height = 8, width = 8, units = "in")
+}
+```
+
+
+### Figure 4F. Peptide correlation maps (tSNE plot) clolored at peptide functional annotations.
+```{r}
+library(data.table)
+library(tidyr)
+library(stringr)
+
+setwd("../data/Drugs_dataset/")
+
+### Read in tSNE scatter
+scatter_file_name <- "V52_SCC_pairs_Family_tSNE_data.out"
+scatter_file <- file.path("rm_mbr_individual_pep_scc", "tSNE_plot", scatter_file_name)
+scatter_data <- read.table(scatter_file, header = TRUE, sep = " ")
+head(scatter_data)
+nrow(scatter_data)
+
+
+
+# Read in refined peptide functional annotation file
+pep_func_anno_file_name <- "V52_rm_mbr_quantified_peptides_func_anno.txt"
+pep_func_anno_file <- file.path("rm_mbr_individual_pep_taxa_refine", "Refined_functional_anno", "V52", pep_func_anno_file_name)
+pep_func_anno_data <- fread(pep_func_anno_file, sep = "\t")
+# Extract COG Family from eggNOG_OGs
+pep_func_anno_data <- pep_func_anno_data %>%
+  mutate(COG_Family = str_extract(eggNOG_OGs, "COG\\d+")) %>%
+  mutate(COG_Family = ifelse(is.na(COG_Family), "-", COG_Family))
+
+head(pep_func_anno_data)
+
+
+
+### Add annotation to peptides in the scatter
+func_anno_types <- c("COG_Family", "COG_Category", "EC", "KEGG_Reaction", "KEGG_ko", "KEGG_Module", "KEGG_Pathway",  "KEGG_TC", "eggNOG_OGs")
+
+for (func_anno_type in func_anno_types){
+  # func_anno_type <- "COG_Category"
+  # func_anno_type <- "KEGG_Reaction"
+  # func_anno_type <- "KEGG_ko"
+  # func_anno_type <- "KEGG_Pathway"
+  # func_anno_type <- "KEGG_TC"
+  
+  # Attaching peptide taxonomic annotation to scatter plot  
+  func_scatter_data <- scatter_data %>% dplyr::left_join(pep_func_anno_data %>% select(Peptide, !!sym(func_anno_type)), by = "Peptide")
+  nrow(func_scatter_data)
+  table(func_scatter_data[[func_anno_type]])
+  
+  # Replace NA
+  func_scatter_data <- func_scatter_data %>%
+    mutate(!!sym(func_anno_type) := replace_na(!!sym(func_anno_type), "Unannotated"))
+  
+  # Define unannotated peptides
+  func_scatter_data <- func_scatter_data %>% mutate(!!sym(func_anno_type) := ifelse(!!sym(func_anno_type) == "-",  "Unannotated", !!sym(func_anno_type)))
+  
+  # Get the top function group
+  func_pep_count <- func_scatter_data %>%
+    count(!!sym(func_anno_type), sort = TRUE)
+  print(func_pep_count)
+  top_func <- func_pep_count %>%
+    top_n(13, n) %>%
+    pull(!!sym(func_anno_type))
+  
+  # Only keep top function category
+  func_scatter_data <- func_scatter_data %>%
+    mutate(Func_anno = ifelse(!!sym(func_anno_type) %in% top_func, !!sym(func_anno_type), "Other Functions"))
+  table(func_scatter_data$Func_anno)
+  
+  #Limit the width of figure legend
+  filtered_func_scatter_data <- func_scatter_data
+  filtered_func_scatter_data$Func_anno <- substr(filtered_func_scatter_data$Func_anno, 1, 22)
+  
+  # # Remove unannotated and other functions peptides from the map
+  # filtered_func_scatter_data <- func_scatter_data %>% filter(Func_anno != "Unannotated") %>% filter(Func_anno != "Other Functions")
+  
+
+  
+  ### Scatter plot
+  # Get distinct function annotations and assign d3 colors
+  category20_colors <- ggsci::pal_d3("category20")(20)
+  unique_funcs <- levels(factor(filtered_func_scatter_data$Func_anno))
+  d3_colors <- category20_colors[1:length(unique_funcs)]
+  names(d3_colors) <- unique_funcs
+  # Specify the color of unannotated peptides and other functions peptides
+  d3_colors["Unannotated"] = "#C7C7C7"
+  d3_colors["Other Functions"] = "#9EDAE5"
+  # d3_colors["Unannotated"] = "#000000"
+  # d3_colors["Other Functions"] = "#00000000"
+  
+  myplot <- ggplot(filtered_func_scatter_data, aes(x = tSNE_1, y = tSNE_2, color = Func_anno)) +
+      geom_point(alpha = 0.8, size = 2) + labs(color = "Peptide Functional annotation") +
+      scale_color_manual(values = d3_colors) +
+      theme_bw() + 
+      theme(axis.text.x = element_text(size = 14, color = "black"), axis.title.x = element_text(size = 16, color = "black"),axis.text.y = element_text(size = 14, color = "black"), axis.title.y = element_text(size = 16, color = "black"), legend.title = element_text(size = 18, color = "black"), legend.text = element_text(size = 16, color = "black"), legend.box.just = "right", legend.position = "bottom", legend.justification = "left") +
+    guides(color = guide_legend(nrow = 2, byrow = TRUE, title.position = "top", override.aes = list(size = 3)))  # Set legend line breaks and position
+  print(myplot)
+  
+  figure_file <- paste0("V52_func_", func_anno_type, "_colored.tiff")
+  ggsave(figure_file, myplot,  height = 12, width = 12, unit = "in")
+  
+  
+  # Saving the plot (Single Protein Source)
+  tiff_file_name <- paste0("V52_func_", func_anno_type, "_colored.tiff")
+  tiff_file <- file.path("figures", "Functional_Map", tiff_file_name)
+  ggsave(tiff_file, myplot, height = 12, width = 12, units = "in", dpi = 300)
+  
+  svg_file_name <- paste0("V52_func_", func_anno_type, "_colored.svg")
+  svg_file <- file.path("figures", "Functional_Map", svg_file_name)
+  ggsave(svg_file, myplot, height = 12, width = 12, units = "in")
+  
+  pdf_file_name <- paste0("V52_func_", func_anno_type, "_colored.pdf")
+  pdf_file <- file.path("figures", "Functional_Map", pdf_file_name)
+  ggsave(pdf_file, myplot, height = 12, width = 12, units = "in")
+  
+  eps_file_name <- paste0("V52_func_", func_anno_type, "_colored.eps")
+  eps_file <- file.path("Figures", "Functional_Map", eps_file_name)
+  ggsave(eps_file, myplot, height = 12, width = 12, units = "in") 
+  
+}
+
+```
+
+
+
+### Figure 5. Applying peptide abundance correlation for peptide taxonomic assignments.
+### See codes in Machine_Learning_Peptide_Tax_Assign.Rmd
+
+
+### Figure 6A Correlation between SCCs of peptide log2-FC based on TNPA and SCCs based on OPA in the top ten genomes.
+```{r}
+library(dplyr)
+library(ggplot2)
+library(data.table)
+library(ggpubr)
+#library(VennDiagram)
+
+
+# setwd("../data/Drugs_dataset/")
+setwd("../data/Drugs_DataSet/")
+
+
+# tax_name <- "MGYG000002438"
+# print(tax_name)
+#individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+#individuals <- c("V47", "V48", "V49", "V52")
+individuals <- c("V52")
+
+# # V52 genomes
+# tax_names <- c("MGYG000000223", "MGYG000000243", "MGYG000002281", "MGYG000002438", "MGYG000002478", "MGYG000002487", "MGYG000002517", "MGYG000002528", "MGYG000002544", "MGYG000004769")
+
+for (individual in individuals){
+  #individual <- "V52"
+  print(individual)
+  
+  ### Get the name of Top Genomes from the individual (tax_names)
+  infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  
+  ### Read in SCC calculated based on the original intensities (SCC of Log2-FC OPA)
+  print("Reading in SCC of original intensities.")
+  original_scc_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.out")
+  original_scc_file <- file.path("rm_mbr_individual_pep_scc", original_scc_file_name )
+  original_scc_data <- fread(original_scc_file, sep = "\t")
+  colnames(original_scc_data) <- c("Peptide_1", "Peptide_2", "SCC_of_original_intensities")
+  original_scc_data <- original_scc_data %>%
+    mutate(Peptide_Pair = paste0(pmin(Peptide_1, Peptide_2), "_", pmax(Peptide_1, Peptide_2)))
+  head(original_scc_data)
+  nrow(original_scc_data)
+  
+  
+  # A dataframe to save SCC of all taxa from the individual
+  combined_taxa_norm_scc_data <- data.frame(Peptide_1.x = character(), Peptide_2.x = character(), SCC_of_taxa_normalized_intensities = numeric(), Peptide_Pair = character(), Peptide_1.y = character(), Peptide_2.y = character(), SCC_of_original_intensities = numeric())
+  
+  for (tax_name in tax_names){
+    print (tax_name)
+    
+    ### Read in SCC calculated based on taxa-normalized intensities
+    print("Reading in SCC of normalized intensities.")
+    taxa_norm_scc_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out_SCC_correlation.out")
+    taxa_norm_scc_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity",  "Sparsity02_Networks", individual, "Calculated_SCC", taxa_norm_scc_file_name)
+    
+    
+    # Check if file exists, skip current loop if not
+    if (!file.exists(taxa_norm_scc_file)) {
+      print(paste("File not found:", taxa_norm_scc_file))
+      next
+    }
+    
+    taxa_norm_scc_data <- fread(taxa_norm_scc_file, sep = "\t")
+    
+    colnames(taxa_norm_scc_data) <- c("Peptide_1", "Peptide_2", "SCC_of_taxa_normalized_intensities")
+    taxa_norm_scc_data <- taxa_norm_scc_data %>%
+      mutate(Peptide_Pair = paste0(pmin(Peptide_1, Peptide_2), "_", pmax(Peptide_1, Peptide_2)))
+    head(taxa_norm_scc_data)
+    nrow(taxa_norm_scc_data)
+    
+    
+  
+    ### Combining two SCCs
+    print("Combining two SCC.")
+    taxa_norm_scc_data <- dplyr::inner_join(taxa_norm_scc_data, original_scc_data,  by = "Peptide_Pair")
+    head(taxa_norm_scc_data)
+    nrow(taxa_norm_scc_data)
+    
+    combined_taxa_norm_scc_data <- rbind(combined_taxa_norm_scc_data, taxa_norm_scc_data)
+    
+    ### Scatter Plot
+    print("Preparing scatter plot.")
+    ggscatter(taxa_norm_scc_data, 
+              x = "SCC_of_original_intensities", 
+              y = "SCC_of_taxa_normalized_intensities",
+              add = "reg.line",          # Add regression line
+              conf.int = TRUE,           # Show confidence interval
+              alpha = 0.3                # Set point transparency
+              ) + 
+      xlim (-0.5, 1) +
+      ylim (-0.5, 1) +
+      theme_bw() +  # Use simple theme
+      annotate("text", x = -0.2, y = 0.9, label = paste(individual), size = 8) +
+      annotate("text", x = -0.2, y = 0.8, label = paste(tax_name), size = 8) +
+      stat_cor(method = "pearson", label.x = -0.35, label.y = 0.7, size = 8) + 
+      annotate("text", x = -0.2, y = 0.6, label = paste0("n=", format(nrow(taxa_norm_scc_data), big.mark = ",")),
+             size = 8) +  # Fix n display position
+      labs(x = "SCC of OPA Log2-FC", y = "SCC of TNPA Log2-FC") +
+      theme(axis.text.x = element_text(size = 16, color = "black", hjust = 1), axis.title.x = element_text(size = 18, color = "black"), axis.text.y = element_text(size = 16, color = "black"), axis.title.y = element_text(size = 18))
+
+    
+    
+    figure_file_name <- paste0(individual, "_", tax_name, "_", "SCC_correlation", ".tiff")
+    output_dir <- "rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/SCC_correlations"
+    figure_file <- file.path(output_dir, figure_file_name)
+    ggsave(figure_file, width = 12, height = 9, units = "in")
+
+  #combined_taxa_norm_scc_data <- rbind(combined_taxa_norm_scc_data, taxa_norm_scc_data)
+  
+  ### Scatter Plot
+  print("Preparing scatter plot.")
+  ggscatter(combined_taxa_norm_scc_data, 
+            x = "SCC_of_original_intensities", 
+            y = "SCC_of_taxa_normalized_intensities",
+            add = "reg.line",          # Add regression line
+            conf.int = TRUE,           # Show confidence interval
+            alpha = 0.3                # Set point transparency
+            ) + 
+    xlim (-0.5, 1) +
+    ylim (-0.5, 1) +
+    theme_bw() +  # Use simple theme
+    annotate("text", x = -0.2, y = 0.9, label = paste(individual), size = 8) +
+    stat_cor(method = "pearson", label.x = -0.35, label.y = 0.8, size = 8) + 
+    annotate("text", x = -0.2, y = 0.7, label = paste0("n=", format(nrow(combined_taxa_norm_scc_data), big.mark = ",")), size = 8) +
+    labs(x = "SCC of OPA Log2-FC", y = "SCC of TNPA Log2-FC") +
+    theme(axis.text.x = element_text(size = 16, color = "black", hjust = 1), axis.title.x = element_text(size = 18, color = "black"), axis.text.y = element_text(size = 16, color = "black"), axis.title.y = element_text(size = 18))
+
+  
+  
+  figure_file_name <- paste0(individual, "_top10_taxa_SCC_correlation", ".tiff")
+  output_dir <- "rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/SCC_correlations"
+  figure_file <- file.path(output_dir, figure_file_name)
+  ggsave(figure_file, width = 12, height = 9, units = "in")
+  
+  }
+    
+}
+```
+
+
+
+### Figure 6D., 6G., 6H.
+### Networks were extracted from generated single-species peptide correlation network and visualized with Gephi
+### Output annotated single-species networks 
+```{r}
+# Plot interactive networks
+library(visNetwork)
+library(data.table)
+library(dplyr)
+library(igraph)
+library(ggsci)
+library(htmlwidgets)
+library(rgexf)
+library(stringr)
+
+
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks")
+
+# rm_percentage <- 0.8
+# rm_percentage <- 0.9
+rm_percentage <- 0.95
+
+
+#individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+individual <- "V52"
+
+# ### Set input file path and output file path
+# # Input file path (SCC of taxa-normalized intensity)
+input_dir <- file.path(individual, "Calculated_SCC")
+# #Input file path (SCC of raw intensity)
+# input_dir <- file.path(individual, "Calculated_SCC_Raw_Intensities")
+
+
+# Set output path/dir (Taxa-normalized intensity)
+output_dir  <- file.path(individual, "TN_intensity_Gephi_Networks_SCC_top5_percent")
+
+# # Set output path/dir (Raw intensity)
+# output_dir  <- file.path(individual, "Raw_intensity_Gephi_Networks_SCC_top5_percent")
+
+
+
+# Check the existence of the output dir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("Output dir created:", output_dir , "\n")
+} else {
+  cat("Output dir existed:", output_dir , "\n")
+}
+
+
+### Get input file list
+# Get the name of Top Genomes from the individual
+print(individual)
+infile_path <- file.path(individual, "Calculated_SCC")
+file_names <- list.files(infile_path)
+tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+print(tax_names)
+
+#tax_name <- "MGYG000000223"
+
+
+### Initialize a dataframe to save properties of networks
+network_stats <- data.frame(
+  Genome = as.character(),
+  Type = as.character(),
+  NodeNumber = as.numeric(),
+  EdgeNumber = as.numeric(),
+  AverageDegree = as.numeric(),
+  AverageWeightedDegree = as.numeric(),
+  GraphDensity = as.numeric(),
+  
+  Diameter = as.numeric(),
+  Modularity = as.numeric(),
+  ClusteringCoefficient = as.numeric(),
+  AveragePathLength = as.numeric()
+)
+
+
+#tax_name = tax_names[1]
+for (tax_name in tax_names){
+  
+  # Get Top pairs scc threshold
+  correlation_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out_SCC_correlation.out")
+  correlation_file <-  file.path(input_dir, correlation_file_name)
+  correlation_data <- fread(correlation_file, sep = "\t")
+  scc_threshold <- quantile(correlation_data$SCC, rm_percentage, na.rm = TRUE)
+  print(tax_name)
+  print(scc_threshold)
+  
+  
+  # Read in correlation matrix
+  correlation_matrix_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out_SCC_correlation.wide.out")
+  correlation_matrix_file <- file.path(input_dir, correlation_matrix_file_name)
+  readin_correlation_matrix <- fread(correlation_matrix_file, sep = "\t")
+  correlation_matrix <- as.matrix(readin_correlation_matrix[,-1])
+  rownames(correlation_matrix) <- readin_correlation_matrix$V1
+  
+  # Remove low SCC from correlation matrix
+  filtered_correlation_matrix <- correlation_matrix
+  filtered_correlation_matrix[correlation_matrix < scc_threshold] <- 0
+  
+  # Build network graph
+  network <- graph_from_adjacency_matrix(filtered_correlation_matrix, weighted=TRUE, mode="undirected", diag=FALSE)
+  update_network <- delete.vertices(network, degree(network) == 0)
+
+  
+  ### Attaching peptide annotations to the nodes in the network
+  # Read in peptide protein source annotations
+  pep_prot_anno_dir <- "../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine/Refined_functional_anno"
+  pep_prot_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_prot_anno_file <- file.path(pep_prot_anno_dir,individual, pep_prot_anno_file_name)
+  pep_prot_anno <- fread(pep_prot_anno_file, sep = "\t")
+  pep_prot_anno <- pep_prot_anno %>% select("Peptide", "Protein_Source")
+  
+  # # Taxa annotation
+  # pep_tax_anno <-  
+  
+  # Read in peptide functional source annotations
+  pep_func_anno_dir <- "../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine/Refined_functional_anno"
+  pep_func_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_func_anno.txt")
+  pep_func_anno_file <- file.path(pep_func_anno_dir, individual, pep_func_anno_file_name)
+  pep_func_anno <- fread(pep_func_anno_file, sep = "\t")
+  pep_func_anno <- pep_func_anno %>% select("Peptide", "BRITE", "COG_Category", "GOs", "KEGG_ko", "KEGG_Module", "KEGG_Pathway", "KEGG_Reaction", "KEGG_TC", "eggNOG_OGs")
+  # Extract COG annotations
+  pep_func_anno <- pep_func_anno %>%
+  mutate(
+    COG_Family = ifelse(
+      str_detect(eggNOG_OGs, "COG"), # Check if content starts with COG
+      str_extract(eggNOG_OGs, "COG[^@]+"), # Extract content from COG to first @ character
+      "-"  # Use "-" if no match
+    )
+  )
+  
+  
+  pep_list <- rownames(correlation_matrix)
+  # # Get peptide taxa annotation of selected peptides
+  # filtered_pep_tax_anno <- pep_tax_anno %>% filter(Peptide %in% pep_list)
+  
+  # Get peptide protein annotation of selected peptides
+  filtered_pep_prot_anno <- pep_prot_anno %>% filter(Peptide %in% pep_list)
+  
+  # Get peptide functional annotation of selected peptides
+  filtered_pep_func_anno <- pep_func_anno %>% filter(Peptide %in% pep_list)
+  
+
+  
+  # Create nodes and edge data frames
+  nodes <- data.frame(id = V(update_network)$name, 
+                      label = V(update_network)$name)
+  nodes_num <- nrow(nodes)
+  edges <- get.data.frame(update_network, what = "edges")
+  edges_num <- nrow(edges)
+  
+  
+  # Merge annotation information
+  nodes <- nodes %>% 
+    left_join(filtered_pep_func_anno, by = c("id" = "Peptide")) %>% 
+    left_join(filtered_pep_prot_anno, by = c("id" = "Peptide"))
+  head(nodes)
+  
+  V(update_network)$protein_source <- nodes$Protein_Source
+  #V(update_network)$function_category <- nodes$KEGG_Reaction
+  V(update_network)$BRITE <- nodes$BRITE
+  V(update_network)$COG_Category <- nodes$COG_Category
+  V(update_network)$GOs <- nodes$GOs
+  V(update_network)$KEGG_ko <- nodes$KEGG_ko
+  V(update_network)$KEGG_Module <- nodes$KEGG_Module
+  V(update_network)$KEGG_Pathway <- nodes$KEGG_Pathway
+  V(update_network)$KEGG_Reaction <- nodes$KEGG_Reaction
+  V(update_network)$KEGG_TC <- nodes$KEGG_TC
+  V(update_network)$eggNOG_OGs <- nodes$eggNOG_OGs
+  V(update_network)$COG_Family <- nodes$COG_Family
+  
+  
+  # Checking to avoid empty networks
+  if (vcount(update_network) == 0) {
+    cat("No vertices in network for", individual, "and", tax_name, "\n")
+    next
+  }
+  
+  ### Output *.gexf file
+  gexf_network <- igraph.to.gexf(update_network)
+  gexf_file <- file.path(output_dir, paste0(individual, "_", tax_name, "_top5_anno.gexf"))
+  gexf_file
+  write.gexf(gexf_network, output = gexf_file)
+  
+  ### Sta the basic information of the network
+  ## Sta the number of degrees of each node
+  node_degrees <- degree(update_network)
+  # node_degrees
+  node_degrees_frame <- data.frame(Peptide = names(node_degrees), Degree = as.numeric(node_degrees))
+  # nrow(node_degrees_frame)
+  # ncol(node_degrees_frame)
+  head(node_degrees_frame)
+  ## Output the number of degrees of each node
+  node_degrees_frame <- node_degrees_frame[order(-node_degrees_frame$Degree), ]
+  #node_degrees_file_name <- sprintf("_SCC0%d_node_degree_sta.out", scc_threshold * 10)
+  node_degrees_file_name <- paste0(individual, "_", tax_name, "_top5_anno_networks_node_degree_sta.out")
+  node_degrees_file <- file.path(output_dir, node_degrees_file_name)
+  write.table(node_degrees_frame, node_degrees_file, sep = "\t", quote = FALSE, row.names = FALSE)  
+  
+  
+  
+  ### Sta the properties of the network
+  diameter_value <- diameter(update_network, directed = FALSE)
+  modularity_value <- modularity(cluster_fast_greedy(update_network))
+  clustering_coefficient_value <- transitivity(update_network, type = "average")
+  average_path_length_value <- mean_distance(update_network, directed = FALSE)
+  
+  node_number <- vcount(update_network)
+  edge_number <- ecount(update_network)
+  average_degree <- mean(degree(update_network))
+  average_weighted_degree <- mean(strength(update_network, weights = E(update_network)$weight))
+  graph_density <- edge_density(update_network)
+  
+  
+  
+  print(diameter_value)
+  print(modularity_value)
+  print(clustering_coefficient_value)
+  print(average_path_length_value)
+  
+  
+  single_network_stats <- data.frame(
+    Genome = tax_name,
+    Type = "Top TN SCC Network",
+    NodeNumber = node_number,
+    EdgeNumber = edge_number,
+    AverageDegree = average_degree,
+    AverageWeightedDegree = average_weighted_degree,
+    GraphDensity = graph_density,
+    
+    Diameter = diameter_value,
+    Modularity = modularity_value,
+    ClusteringCoefficient = clustering_coefficient_value,
+    AveragePathLength = average_path_length_value
+  )
+  
+  network_stats <- rbind(network_stats, single_network_stats)  
+  
+  
+  
+  
+  
+  ###### Generate random network
+  random_network <- igraph::erdos.renyi.game(nodes_num, edges_num, type = "gnm")
+  ### Output *.gexf format random network file
+  gexf_random_network  <- igraph.to.gexf(random_network)
+  gexf_random_network_file <- file.path(output_dir, paste0(individual, "_", tax_name, "_top5_random.gexf"))
+  gexf_file
+  write.gexf(gexf_random_network, output = gexf_random_network_file)
+
+  
+  ### Sta the properties of the network
+  diameter_value <- diameter(random_network, directed = FALSE)
+  modularity_value <- modularity(cluster_fast_greedy(random_network))
+  clustering_coefficient_value <- transitivity(random_network, type = "average")
+  average_path_length_value <- mean_distance(random_network, directed = FALSE)
+  
+  node_number <- vcount(random_network)
+  edge_number <- ecount(random_network)
+  average_degree <- mean(degree(random_network))
+  average_weighted_degree <- mean(strength(random_network, weights = E(random_network)$weight))
+  graph_density <- edge_density(random_network)
+  
+  
+  
+  print(diameter_value)
+  print(modularity_value)
+  print(clustering_coefficient_value)
+  print(average_path_length_value)
+  
+  
+  single_network_stats <- data.frame(
+    Genome = tax_name,
+    Type = "TN Random SCC Network",
+    NodeNumber = node_number,
+    EdgeNumber = edge_number,
+    AverageDegree = average_degree,
+    AverageWeightedDegree = average_weighted_degree,
+    GraphDensity = graph_density,
+    
+    Diameter = diameter_value,
+    Modularity = modularity_value,
+    ClusteringCoefficient = clustering_coefficient_value,
+    AveragePathLength = average_path_length_value
+  )
+  
+  network_stats <- rbind(network_stats, single_network_stats)
+}  
+
+sta_out_file <- file.path(output_dir, "compare_random_network_properties.out") 
+write.table(network_stats, sta_out_file, row.names = FALSE, sep = "\t", quote = FALSE)
+
+
+
+
+
+
+
+
+### Output annotated single-species networks and remove peptides from proteins with less than two/three peptides
+# Plot interactive networks
+library(visNetwork)
+library(data.table)
+library(dplyr)
+library(igraph)
+library(ggsci)
+library(htmlwidgets)
+library(rgexf)
+
+
+setwd("../data/Drugs_dataset/rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks")
+
+# rm_percentage <- 0.8
+# rm_percentage <- 0.9
+rm_percentage <- 0.95
+# 
+prot_pep_num_threshold <- 2
+# prot_pep_num_threshold <- 3
+
+#individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+individual <- "V52"
+
+# ### Set input file path and output file path
+# # Input file path (SCC of taxa-normalized intensity)
+input_dir <- file.path(individual, "Calculated_SCC")
+# #Input file path (SCC of raw intensity)
+# input_dir <- file.path(individual, "Calculated_SCC_Raw_Intensities")
+
+
+# Set output path/dir (Taxa-normalized intensity)
+# output_dir  <- file.path(individual, "TN_intensity_Gephi_Networks_SCC_top5_percent")
+
+# Set output path/dir (Taxa-normalized intensity)
+output_dir  <- file.path(individual, "TN_intensity_Gephi_Networks_SCC_top5_percent_rm_ls_2_prot_pep")
+# output_dir  <- file.path(individual, "TN_intensity_Gephi_Networks_SCC_top5_percent_rm_ls_3_prot_pep")
+
+# # Set output path/dir (Raw intensity)
+# output_dir  <- file.path(individual, "Raw_intensity_Gephi_Networks_SCC_top5_percent")
+
+
+
+# Check the existence of the output dir
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+  cat("Output dir created:", output_dir , "\n")
+} else {
+  cat("Output dir existed:", output_dir , "\n")
+}
+
+
+### Get input file list
+# Get the name of Top Genomes from the individual
+print(individual)
+infile_path <- file.path(individual, "Calculated_SCC")
+file_names <- list.files(infile_path)
+tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+print(tax_names)
+
+
+
+
+### Initialize a dataframe to save properties of networks
+network_stats <- data.frame(
+  Genome = as.character(),
+  Type = as.character(),
+  NodeNumber = as.numeric(),
+  EdgeNumber = as.numeric(),
+  AverageDegree = as.numeric(),
+  AverageWeightedDegree = as.numeric(),
+  GraphDensity = as.numeric(),
+  
+  Diameter = as.numeric(),
+  Modularity = as.numeric(),
+  ClusteringCoefficient = as.numeric(),
+  AveragePathLength = as.numeric()
+)
+
+
+### Read in peptide protein source annotations
+pep_prot_anno_dir <- "../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine/Refined_functional_anno"
+pep_prot_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+pep_prot_anno_file <- file.path(pep_prot_anno_dir,individual, pep_prot_anno_file_name)
+pep_prot_anno <- fread(pep_prot_anno_file, sep = "\t")
+pep_prot_anno <- pep_prot_anno %>% select("Peptide", "Protein_Source")
+
+### Read in peptide functional source annotations
+pep_func_anno_dir <- "../data/Drugs_dataset/rm_mbr_individual_pep_taxa_refine/Refined_functional_anno"
+pep_func_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_func_anno.txt")
+pep_func_anno_file <- file.path(pep_func_anno_dir, individual, pep_func_anno_file_name)
+pep_func_anno <- fread(pep_func_anno_file, sep = "\t")
+pep_func_anno <- pep_func_anno %>% select("Peptide", "BRITE", "COG_Category", "GOs", "KEGG_ko", "KEGG_Module", "KEGG_Pathway", "KEGG_Reaction", "KEGG_TC", "eggNOG_OGs")
+
+# Extract COG annotations
+pep_func_anno <- pep_func_anno %>%
+mutate(
+  COG_Family = ifelse(
+    str_detect(eggNOG_OGs, "COG"), # Detect if there is content starting with COG
+    str_extract(eggNOG_OGs, "COG[^@]+"), # Extract the content starting with COG, the first @ before the content
+    "-"
+  )
+)
+
+
+### Constructing peptide network for different bacteria species
+#tax_name = tax_names[1]
+for (tax_name in tax_names){
+  #tax_name <- "MGYG000000223"  
+  # Get Top pairs scc threshold
+  correlation_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out_SCC_correlation.out")
+  correlation_file <-  file.path(input_dir, correlation_file_name)
+  correlation_data <- fread(correlation_file, sep = "\t")
+  scc_threshold <- quantile(correlation_data$SCC, rm_percentage, na.rm = TRUE)
+  print(tax_name)
+  print(scc_threshold)
+  filtered_correlation_data <- correlation_data %>% filter(SCC >= scc_threshold)
+  
+  
+  # Read in correlation matrix
+  correlation_matrix_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out_SCC_correlation.wide.out")
+  correlation_matrix_file <- file.path(input_dir, correlation_matrix_file_name)
+  readin_correlation_matrix <- fread(correlation_matrix_file, sep = "\t")
+  correlation_matrix <- as.matrix(readin_correlation_matrix[,-1])
+  rownames(correlation_matrix) <- readin_correlation_matrix$V1
+  
+
+  ### Attaching peptide annotations to the nodes in the network
+  pep_list <- rownames(correlation_matrix)
+  # # Get peptide taxa annotation of selected peptides
+  # filtered_pep_tax_anno <- pep_tax_anno %>% filter(Peptide %in% pep_list)
+  
+  # Get peptide protein annotation of selected peptides
+  filtered_pep_prot_anno <- pep_prot_anno %>% filter(Peptide %in% pep_list)
+  
+  # Get peptide functional annotation of selected peptides
+  filtered_pep_func_anno <- pep_func_anno %>% filter(Peptide %in% pep_list)
+  
+  
+  ### Get peptide list of peptides from proteins with greater than or equal to two/three peptides
+  prot_pep_count <- filtered_pep_prot_anno %>%
+    group_by(Protein_Source) %>%
+    summarise(peptide_count = n(), .groups = 'drop')
+  head(prot_pep_count)
+  print(tax_name)
+  print(nrow(prot_pep_count))
+  
+  filtered_prot <- prot_pep_count %>% filter(peptide_count >= prot_pep_num_threshold)
+  print(nrow(filtered_prot))
+  
+  
+  filtered_qualified_pep <- filtered_pep_prot_anno %>%
+    filter(Protein_Source %in% filtered_prot$Protein_Source) %>%
+    select("Peptide") %>% 
+    pull()
+
+  
+  # # Remove low SCC from correlation matrix
+  # filtered_correlation_matrix <- correlation_matrix
+  # filtered_correlation_matrix[correlation_matrix < scc_threshold] <- 0
+  
+  
+  # Remove peptides from proteins with less than two/three peptides from the matrix
+  nrow(filtered_correlation_data)
+  qualified_filtered_correlation_data <- filtered_correlation_data %>% filter(Peptide_1 %in% filtered_qualified_pep & Peptide_2 %in% filtered_qualified_pep)
+  nrow(qualified_filtered_correlation_data)
+  
+  # 构建网络图
+  network <- graph_from_data_frame(d = qualified_filtered_correlation_data, directed = FALSE)
+  E(network)$weight <- qualified_filtered_correlation_data$SCC
+  #network <- graph_from_adjacency_matrix(filtered_correlation_matrix, weighted=TRUE, mode="undirected", diag=FALSE)
+  update_network <- delete.vertices(network, degree(network) == 0)
+  
+  plot(update_network)
+  
+  
+  
+  # 创建节点和边数据框
+  nodes <- data.frame(id = V(update_network)$name, 
+                      label = V(update_network)$name)
+  nodes_num <- nrow(nodes)
+  edges <- get.data.frame(update_network, what = "edges")
+  edges_num <- nrow(edges)
+  
+  
+  # 合并注释信息
+  nodes <- nodes %>% 
+    left_join(filtered_pep_func_anno, by = c("id" = "Peptide")) %>% 
+    left_join(filtered_pep_prot_anno, by = c("id" = "Peptide"))
+  head(nodes)
+  
+  V(update_network)$protein_source <- nodes$Protein_Source
+  #V(update_network)$function_category <- nodes$KEGG_Reaction
+  V(update_network)$BRITE <- nodes$BRITE
+  V(update_network)$COG_Category <- nodes$COG_Category
+  V(update_network)$GOs <- nodes$GOs
+  V(update_network)$KEGG_ko <- nodes$KEGG_ko
+  V(update_network)$KEGG_Module <- nodes$KEGG_Module
+  V(update_network)$KEGG_Pathway <- nodes$KEGG_Pathway
+  V(update_network)$KEGG_Reaction <- nodes$KEGG_Reaction
+  V(update_network)$KEGG_TC <- nodes$KEGG_TC
+  V(update_network)$eggNOG_OGs <- nodes$eggNOG_OGs
+  V(update_network)$COG_Family <- nodes$COG_Family
+  
+  
+  # Checking to avoid empty networks
+  if (vcount(update_network) == 0) {
+    cat("No vertices in network for", individual, "and", tax_name, "\n")
+    next
+  }
+  
+  ### Output *.gexf file
+  gexf_network <- igraph.to.gexf(update_network)
+  gexf_file <- file.path(output_dir, paste0(individual, "_", tax_name, "_top5_anno.gexf"))
+  gexf_file
+  write.gexf(gexf_network, output = gexf_file)
+  
+  ### Sta the basic information of the network
+  ## Sta the number of degrees of each node
+  node_degrees <- degree(update_network)
+  # node_degrees
+  node_degrees_frame <- data.frame(Peptide = names(node_degrees), Degree = as.numeric(node_degrees))
+  # nrow(node_degrees_frame)
+  # ncol(node_degrees_frame)
+  head(node_degrees_frame)
+  ## Output the number of degrees of each node
+  node_degrees_frame <- node_degrees_frame[order(-node_degrees_frame$Degree), ]
+  #node_degrees_file_name <- sprintf("_SCC0%d_node_degree_sta.out", scc_threshold * 10)
+  node_degrees_file_name <- paste0(individual, "_", tax_name, "_top5_anno_networks_node_degree_sta.out")
+  node_degrees_file <- file.path(output_dir, node_degrees_file_name)
+  write.table(node_degrees_frame, node_degrees_file, sep = "\t", quote = FALSE, row.names = FALSE)  
+  
+  
+  
+  ### Sta the properties of the network
+  diameter_value <- diameter(update_network, directed = FALSE)
+  modularity_value <- modularity(cluster_fast_greedy(update_network))
+  clustering_coefficient_value <- transitivity(update_network, type = "average")
+  average_path_length_value <- mean_distance(update_network, directed = FALSE)
+  
+  node_number <- vcount(update_network)
+  edge_number <- ecount(update_network)
+  average_degree <- mean(degree(update_network))
+  average_weighted_degree <- mean(strength(update_network, weights = E(update_network)$weight))
+  graph_density <- edge_density(update_network)
+  
+  
+  
+  print(diameter_value)
+  print(modularity_value)
+  print(clustering_coefficient_value)
+  print(average_path_length_value)
+  
+  
+  single_network_stats <- data.frame(
+    Genome = tax_name,
+    Type = "Top TN SCC Network",
+    NodeNumber = node_number,
+    EdgeNumber = edge_number,
+    AverageDegree = average_degree,
+    AverageWeightedDegree = average_weighted_degree,
+    GraphDensity = graph_density,
+    
+    Diameter = diameter_value,
+    Modularity = modularity_value,
+    ClusteringCoefficient = clustering_coefficient_value,
+    AveragePathLength = average_path_length_value
+  )
+  
+  network_stats <- rbind(network_stats, single_network_stats)
+  
+  
+  
+  
+
+  ###### Generate random network
+  random_network <- igraph::erdos.renyi.game(nodes_num, edges_num, type = "gnm")
+  ### Output *.gexf format random network file
+  gexf_random_network  <- igraph.to.gexf(random_network)
+  gexf_random_network_file <- file.path(output_dir, paste0(individual, "_", tax_name, "_top5_random.gexf"))
+  gexf_file
+  write.gexf(gexf_random_network, output = gexf_random_network_file)
+
+  
+  ### Sta the properties of the network
+  diameter_value <- diameter(random_network, directed = FALSE)
+  modularity_value <- modularity(cluster_fast_greedy(random_network))
+  clustering_coefficient_value <- transitivity(random_network, type = "average")
+  average_path_length_value <- mean_distance(random_network, directed = FALSE)
+  
+  node_number <- vcount(random_network)
+  edge_number <- ecount(random_network)
+  average_degree <- mean(degree(random_network))
+  average_weighted_degree <- mean(strength(random_network, weights = E(random_network)$weight))
+  graph_density <- edge_density(random_network)
+  
+  
+  
+  print(diameter_value)
+  print(modularity_value)
+  print(clustering_coefficient_value)
+  print(average_path_length_value)
+  
+  
+  single_network_stats <- data.frame(
+    Genome = tax_name,
+    Type = "TN Random SCC Network",
+    NodeNumber = node_number,
+    EdgeNumber = edge_number,
+    AverageDegree = average_degree,
+    AverageWeightedDegree = average_weighted_degree,
+    GraphDensity = graph_density,
+    
+    Diameter = diameter_value,
+    Modularity = modularity_value,
+    ClusteringCoefficient = clustering_coefficient_value,
+    AveragePathLength = average_path_length_value
+  )
+  
+  network_stats <- rbind(network_stats, single_network_stats)
+} 
+
+
+
+sta_out_file <- file.path(output_dir, "compare_random_network_properties.out") 
+write.table(network_stats, sta_out_file, row.names = FALSE, sep = "\t", quote = FALSE)
+
+```
+
+
+### Figure 6B. - 6C. Compare the modularity and clustering coefficient of peptide correlation networks constructed with SCC of TNPA log2-FC than networks constructed with SCC of OPA log2-FC.
+```{r}
+### Compare the network properties
+raw_int_network_properties_file_path <- "rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/V52/Raw_intensity_Gephi_Networks_SCC_top5_percent"
+
+raw_int_network_properties_file <- file.path(raw_int_network_properties_file_path, "compare_random_network_properties.out")
+
+raw_int_network_properties <- read.table(raw_int_network_properties_file, header = TRUE, sep = "\t")
+
+
+tn_norm_int_network_properties_file_path <- "rm_mbr_individual_pep_taxa_normal_intensity/Sparsity02_Networks/V52/TN_intensity_Gephi_Networks_SCC_top5_percent"
+
+tn_norm_int_network_properties_file <- file.path(tn_norm_int_network_properties_file_path, "compare_random_network_properties.out")
+
+tn_norm_int_network_properties <- read.table(tn_norm_int_network_properties_file, header = TRUE, sep = "\t")
+
+
+all_network_properties <- rbind(raw_int_network_properties, tn_norm_int_network_properties)
+head(all_network_properties)
+nrow(all_network_properties)
+
+all_network_properties$Type <- factor(all_network_properties$Type, levels = c("Raw Random SCC Network", "Top Raw SCC Network", "TN Random SCC Network", "Top TN SCC Network"))
+
+
+
+# Selecting representative networks
+selected_all_network_properties <- all_network_properties %>% filter(Type == "Top Raw SCC Network" | Type == "Top TN SCC Network") %>% arrange(desc(Modularity))
+
+selected_all_network_properties <- selected_all_network_properties %>%
+  mutate(Type = recode(Type, 
+                       "Top Raw SCC Network" = "OPA-based", 
+                       "Top TN SCC Network" = "TNPA-based"))
+
+head(selected_all_network_properties)
+
+
+
+# Plot for network properties comparison between OPA-based networks and TNPA-based networks
+# property <- "Modularity"
+property <- "ClusteringCoefficient"
+
+
+# Calculate Cohen's d efFect size measure (library(effsize))
+OPA_group <- selected_all_network_properties %>% filter(Type == "OPA-based") %>% select(!!sym(property)) %>% pull()
+TNPA_group <- selected_all_network_properties %>% filter(Type == "TNPA-based") %>% select(!!sym(property)) %>% pull()
+differences <- OPA_group - TNPA_group
+cohen_d_paired <- mean(differences) / sd(differences)
+print(paste("Cohen's d for paired samples:", cohen_d_paired))
+cohen_d_paired_formatted <- format(cohen_d_paired, digits = 2)
+cohen_d_paired_formatted
+
+
+myplot <- ggplot(selected_all_network_properties, aes(x = Type, y = !!sym(property), group = Type)) +
+  geom_boxplot(width = 0.35, position = position_dodge(width = 0.75), outlier.shape = NA, color = "black", fill = "grey") + 
+  theme_bw() +
+  #ylim(0.2, 1) +
+  # theme_classic() +
+  geom_point(position = position_dodge(width = 0.75), size = 1.5, alpha = 0.8) +
+  geom_line(aes(group = Genome), color = "lightgrey") + 
+  labs(x = "Network Types", y = property) +
+  theme(axis.text.x = element_text(size = 12, color = "black"), axis.title.x = element_text(size = 14),axis.text.y = element_text(size = 12, color = "black"), axis.title.y = element_text(size = 14)) + 
+  # geom_signif(comparisons = list(c("OPA-based", "TNPA-based")), 
+  #             map_signif_level = TRUE, textsize = 4, y_position = max(selected_all_network_properties[[property]]) * 0.95)
+  stat_compare_means(method = "wilcox.test", label = "p.signif", paired = TRUE, size = 4, vjust = 0.5, label.x = 1.5, label.y = 0.90) +
+  annotate("text", x = 1.5, y = 0.85, label = paste0("Effect size = ", cohen_d_paired_formatted, "\n(Cohen's d)"), size = 4)
+  
+myplot
+
+
+# Sving the plot
+tiff_file_name <- paste0(individual, "_network_TNPA_OPA_compare_", property, ".tiff")
+ggsave(tiff_file_name, myplot, width = 4, height = 4, units = "in", dpi = 300)
+svg_file_name <- paste0(individual, "_network_TNPA_OPA_compare_", property, "_all_pep_pair_SCC.svg")
+ggsave(svg_file_name, myplot, width = 4, height = 4, units = "in")
+pdf_file_name <- paste0(individual, "_network_TNPA_OPA_compare_", property, "_all_pep_pair_SCC.pdf")
+ggsave(pdf_file_name, myplot, width = 4, height = 4, units = "in")
+eps_file_name <- paste0(individual, "_network_TNPA_OPA_compare_", property, "_all_pep_pair_SCC.eps")
+ggsave(eps_file_name, myplot, width = 4, height = 4, units = "in")
+
+```
+
+
+
+### Figure 6E. Compare the proportion of peptide pairs from the same protein in single-species peptide correlation networks and the proportion in all peptide pairs from the corresponding species.
+```{r}
+library(dplyr)
+library(ggplot2)
+library(effsize)
+
+setwd("../data/Drugs_dataset/")
+
+# Read in SCC of peptide pairs (SCC of taxa-normalized intensities)
+# tax_name <- "MGYG000002506"
+# individual <- "V47"
+
+
+### Saving the percentage of peptide pairs from same/different protein(s) in top SCC pairs and other pairs across top genomes from different individuals
+# Protein_source_type: "Same_Protein", "Different_Proteins"
+# Type: "High_SCC_Pairs", "Other_SCC_pairs"
+# Top 1% SCC pairs as top SCC pairs
+
+# top_scc_thresholds <- c(0.99, 0.97, 0.95, 0.90, 0.80, 0.50, 0)
+# top_scc_thresholds <- c(0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90, 0)
+top_scc_thresholds <- c(0.95, 0)
+# top_scc_threshold <- 0.90
+
+
+# Initialize a dataframe to save the percentage of peptide pairs from the same protein at different top percentage SCC thresholds. 
+all_protein_source_sta <- data.frame(Top_percentage = numeric(), Individual = character(), Genome = character(), Type = character(), Pairs = numeric(), Same_Protein_Pairs = numeric(), stringsAsFactors = FALSE)
+
+
+  
+  
+#individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+individuals <- c("V52")
+for (individual in individuals){
+  for (top_scc_threshold in top_scc_thresholds){
+    individual_prot_source_type_data <- data.frame(Protein_source_type = as.character(), Individual = as.character(), Genome = as.character(), Type = as.character())
+    ### Read in refined peptide protein source annotations
+    pep_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+    pep_anno_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_anno_file_name)
+    pep_anno_data <- read.table(pep_anno_file, header = TRUE, sep = "\t")
+    
+    pep_prot_source <- pep_anno_data %>% select(Peptide, Protein_Source)
+    head(pep_prot_source)
+    nrow(pep_prot_source)
+    
+    
+    ### Get the list of tax names
+    print(individual)
+    
+    # SCC of normalized intensity
+    infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC")
+    # # SCC of raw intensity
+    # infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC_Raw_Intensities")
+    
+    
+    file_names <- list.files(infile_path)
+    tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+    print(tax_names)
+    # tax_names <- c("MGYG000000223", "MGYG000002438", "MGYG000002445", "MGYG000002448", "MGYG000002487", "MGYG000002492", "MGYG000002506", "MGYG000002544", "MGYG000002926", "MGYG000004769")
+    
+    for (tax_name in tax_names){
+      print(tax_name)
+      ### Read in calculated SCC data (SCC of taxa-based normalized abundance of single species)
+      pep_scc_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out_SCC_correlation.out")
+      pep_scc_file <- file.path(infile_path, pep_scc_file_name)
+      pep_scc_data <- read.table(pep_scc_file, header = TRUE, sep = "\t")
+      head(pep_scc_data)
+      nrow(pep_scc_data)
+      
+      
+      ### Attach peptide protein source to peptide pairs
+      pep_scc_data <- dplyr::left_join(pep_scc_data, pep_prot_source, by = c("Peptide_1" = "Peptide"))
+      pep_scc_data <- pep_scc_data %>% rename("Peptide_1_Protein_Source" = "Protein_Source")
+      pep_scc_data <- dplyr::left_join(pep_scc_data, pep_prot_source, by = c("Peptide_2" = "Peptide"))
+      pep_scc_data <- pep_scc_data %>% rename("Peptide_2_Protein_Source" = "Protein_Source")
+      head(pep_scc_data)
+      nrow(pep_scc_data)
+      # Checking peptide pairs from the same protein/different proteins
+      pep_scc_data <- pep_scc_data %>% 
+      mutate(Protein_source_type = if_else(Peptide_1_Protein_Source == Peptide_2_Protein_Source, "Same_Protein", "Different_Proteins"))
+      
+      
+      # Seperate top SCC pairs and other SCC pairs
+      scc_threshold <- quantile(pep_scc_data$SCC, top_scc_threshold)
+      print(scc_threshold)
+      
+      # Top SCC pairs
+      filtered_pep_scc_data <- pep_scc_data %>% filter(SCC >= scc_threshold)
+      table(filtered_pep_scc_data$Protein_source_type)
+      filtered_pep_scc_data <- filtered_pep_scc_data %>% select(Protein_source_type)
+      filtered_pep_scc_data$Individual <- individual
+      filtered_pep_scc_data$Genome <- tax_name
+      filtered_pep_scc_data$Type <- "Top_SCC_pairs"
+      
+      # # Other SCC pairs
+      # other_pep_scc_data <- pep_scc_data %>% filter(SCC < scc_threshold)
+      # table(other_pep_scc_data$Protein_source_type)
+      # other_pep_scc_data <- other_pep_scc_data  %>% select(Protein_source_type)
+      # other_pep_scc_data$Individual <- individual
+      # other_pep_scc_data$Genome <- tax_name
+      # other_pep_scc_data$Type <- "Other_SCC_pairs"
+      
+      # Combining results from different genomes from differnt individuals
+      # print("Expanding all protein data.")
+      # print(nrow(filtered_pep_scc_data))
+      # print(nrow(other_pep_scc_data))
+      if(nrow(filtered_pep_scc_data) > 0) {
+          individual_prot_source_type_data <- rbind(individual_prot_source_type_data, filtered_pep_scc_data)
+      }
+      
+      # if(nrow(other_pep_scc_data) > 0) {
+      #     individual_prot_source_type_data <- rbind(individual_prot_source_type_data, other_pep_scc_data)
+      # }
+    }
+ 
+    ### Staing the percentage of peptide pairs from same/different protein(s) in top SCC pairs and other pairs across top genomes from different individuals
+    protein_source_sta <- data.frame(Individual = character(), Genome = character(), Type = character(), Pairs = numeric(), Same_Protein_Pairs = numeric(), Top_percentage = numeric(), stringsAsFactors = FALSE)
+    
+    # Count the number of rows for each Genome and rows with Peptide from the same protein
+    protein_source_sta<- individual_prot_source_type_data %>%
+      group_by(Individual, Genome, Type) %>%
+      summarise(
+        Pairs = n(),
+        Same_Protein_Pairs = sum(Protein_source_type == "Same_Protein")
+      ) %>%
+      ungroup()
+    
+    protein_source_sta$Percentage <- protein_source_sta$Same_Protein_Pairs/protein_source_sta$Pairs
+    protein_source_sta$Top_percentage <- as.character(1 - top_scc_threshold)
+    
+    # View results
+    head(protein_source_sta)
+    #tail(near_location_sta)
+    nrow(protein_source_sta)
+    all_protein_source_sta <- rbind(all_protein_source_sta, protein_source_sta)
+  }
+}
+
+
+
+
+head(all_protein_source_sta)
+#tail(near_location_sta)
+nrow(all_protein_source_sta)
+
+
+
+
+### Boxplot for comparing the percentage of peptide pairs from same/different protein(s) in top SCC pairs at different top percentage thresholds
+# Figure title: "Comparison of the percentages of peptides from the same protein and different proteins in top scc pairs and other scc pairs from all studied species in all six individuals".
+all_protein_source_sta$Top_percentage <- as.numeric(as.character(all_protein_source_sta$Top_percentage))
+all_protein_source_sta$Top_percentage <- round(all_protein_source_sta$Top_percentage, 2)
+all_protein_source_sta$Top_percentage <- as.factor(all_protein_source_sta$Top_percentage)
+# table(protein_source_sta$Type)
+# comparisons <- list(c("Other_SCC_pairs", "Top_SCC_pairs"))
+myplot <- ggplot(all_protein_source_sta, aes(x = Top_percentage, y = Percentage, group = Top_percentage)) +
+  geom_boxplot(width = 0.2, position = position_dodge(width = 0.75), outlier.shape = NA) +
+  theme_bw() +
+  geom_point(position = position_dodge(width = 0.75), size = 1.5, alpha = 0.6) +
+  geom_line(aes(group = interaction(Individual, Genome)), color = "lightgrey") + 
+  labs(x = "SCC percentage threshold", y = "Percentage of peptide pairs from the same protein") +
+  # stat_compare_means(comparisons = comparisons, 
+  #                    method = "wilcox.test", label = "p.format", size = 6,
+  #                    vjust = 0.5) + 
+  #scale_y_continuous(breaks = seq(0, 0.6, by = 0.1), limits = c(0, 0.6)) +
+  theme(axis.text.x = element_text(size = 12, color = "black"), axis.title.x = element_text(size = 14),axis.text.y = element_text(size = 12, color = "black"), axis.title.y = element_text(size = 14))
+myplot
+
+
+# Saving plot
+figure_name <- paste0("Percentage_pep_from_same_prot_in_top_",as.character((1-top_scc_threshold) *100), "_pairs_across_different_individuals.tiff")
+print(figure_name)
+figure_file <- file.path("figures", "Other_Figures", figure_name)
+ggsave(figure_file, plot, device = "tiff", width = 8, height = 6, units = "in")
+
+
+
+
+### Compare the percentage of peptides from the same protein in the peptide correlation network (Top 5% SCC pairs) and the percentage from all peptide pairs.
+# Selected data at specific percetages
+selected_all_protein_source_sta <- all_protein_source_sta %>% filter(Top_percentage == "0.05" | Top_percentage == "1")
+
+# Rename x-axis types names
+selected_all_protein_source_sta <- selected_all_protein_source_sta %>%
+  mutate(Top_percentage = recode(Top_percentage , 
+                       "0.05" = "Network pairs", 
+                       "1" = "All pairs"))
+selected_all_protein_source_sta
+
+
+# Calculate Cohen's d efFect size measure (library(effsize))
+network_group <- selected_all_protein_source_sta %>% filter(Top_percentage == "Network pairs") %>% select(Percentage) %>% pull()
+all_pep_group <- selected_all_protein_source_sta %>% filter(Top_percentage == "All pairs") %>% select(Percentage) %>% pull()
+differences <- network_group - all_pep_group
+cohen_d_paired <- mean(differences) / sd(differences)
+print(paste("Cohen's d for paired samples:", cohen_d_paired))
+cohen_d_paired_formatted <- format(cohen_d_paired, digits = 2)
+
+
+# Boxplot
+myplot <- ggplot(selected_all_protein_source_sta, aes(x = Top_percentage, y = Percentage, group = Top_percentage)) +
+  geom_boxplot(width = 0.35, position = position_dodge(width = 0.75), outlier.shape = NA, color = "black", fill = "grey") +
+  theme_bw() +
+  ylim(0, 0.4) +
+  geom_point(position = position_dodge(width = 0.75), size = 1.5, alpha = 0.8) +
+  geom_line(aes(group = interaction(Individual, Genome)), color = "lightgrey") + 
+  labs(x = "Sources of peptide pairs", y = "Percentage of peptide pairs from \nthe same protein") +
+  stat_compare_means(method = "wilcox.test", label = "p.signif", paired = TRUE, size = 4,
+                     vjust = 0.5, label.x = 1.5, label.y = 0.3) +
+  #scale_y_continuous(breaks = seq(0, 0.6, by = 0.1), limits = c(0, 0.6)) +
+  theme(axis.text.x = element_text(size = 12, color = "black"), axis.title.x = element_text(size = 14),axis.text.y = element_text(size = 12, color = "black"), axis.title.y = element_text(size = 14)) +
+  # geom_signif(comparisons = list(c("Network pairs", "All pairs")), 
+  #             map_signif_level = TRUE, textsize = 4, y_position = max(selected_all_protein_source_sta$Percentage) * 0.95, test = "wilcox.test") +
+  annotate("text", x = 1.5, y = 0.35, label = paste0("Effect size = ", cohen_d_paired_formatted, "\n(Cohen's d)"), size = 4)
+  
+myplot
+
+
+# Saving the plot
+tiff_file_name <- paste0(individual, "_TNPA_network_same_prot_percentage.tiff")
+ggsave(tiff_file_name, myplot, width = 4, height = 4, units = "in", dpi = 300)
+svg_file_name <- paste0(individual, "_TNPA_network_same_prot_percentage.svg")
+ggsave(svg_file_name, myplot, width = 4, height = 4, units = "in")
+pdf_file_name <- paste0(individual, "_TNPA_network_same_prot_percentage.pdf")
+ggsave(pdf_file_name, myplot, width = 4, height = 4, units = "in")
+eps_file_name <- paste0(individual, "_TNPA_network_same_prot_percentage.eps")
+ggsave(eps_file_name, myplot, width = 4, height = 4, units = "in")
+
+```
+
+
+### Figure 6F. Compare the proportion of peptide pairs from proteins potentially located near each other in the genome in single-species peptide correlation networks and the proportion in all peptide pairs from the corresponding species
+```{r}
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+setwd("../data/Drugs_dataset/")
+
+# Read in SCC of peptide pairs (SCC of taxa-normalized intensities)
+# tax_name <- "MGYG000002506"
+# individual <- "V47"
+
+
+### Saving the percentage of peptide pairs from same/different protein(s) in top SCC pairs and other pairs across top genomes from different individuals
+# Protein_source_type: "Proteins_with_potentially_nearby_locations", "Other_Proteins"
+
+
+# top_scc_thresholds <- c(0.99, 0.97, 0.95, 0.90, 0.80, 0.50, 0)
+# top_scc_thresholds <- c(0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.91, 0.90, 0)
+top_scc_thresholds <- c(0.95, 0)
+# top_scc_threshold <- 0.90
+
+# Threshold for potentially nearby genome locations
+loc_threshold <- 20
+
+# Initialize a dataframe to save the percentage of peptide pairs from proteins with potentially nearby locations at different top percentage SCC thresholds. 
+all_near_location_sta <- data.frame(Top_percentage = numeric(), Individual = character(), Genome = character(), Type = character(), Pairs = numeric(), Nearby_Pairs = numeric(), stringsAsFactors = FALSE)
+
+  
+  
+#individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+individuals <- c("V52")
+for (individual in individuals){
+  
+  ### Read in refined peptide protein source annotations
+  pep_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+  pep_anno_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_anno_file_name)
+  pep_anno_data <- read.table(pep_anno_file, header = TRUE, sep = "\t")
+  
+  pep_prot_source <- pep_anno_data %>% select(Peptide, Protein_Source)
+  head(pep_prot_source)
+  nrow(pep_prot_source)
+    
+  for (top_scc_threshold in top_scc_thresholds){
+    # Protein_source_type: "Potentially_nearby_proteins", "Other_Proteins"
+    individual_all_prot_distance_data <- data.frame(Distance = as.numeric(), Individual = as.character(), Genome = as.character(), Type = as.character())
+    
+    individual_diff_prot_distance_data <- data.frame(Distance = as.numeric(), Individual = as.character(), Genome = as.character(),  Type = as.character())
+
+    
+    ### Get the list of tax names
+    print(individual)
+    
+    # # SCC of normalized intensity
+    # infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC")
+    # SCC of raw intensity
+    infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC_Raw_Intensities")
+    
+    
+    file_names <- list.files(infile_path)
+    tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+    print(tax_names)
+    # tax_names <- c("MGYG000000223", "MGYG000002438", "MGYG000002445", "MGYG000002448", "MGYG000002487", "MGYG000002492", "MGYG000002506", "MGYG000002544", "MGYG000002926", "MGYG000004769")
+    
+    # sta the percentage of peptide pairs from proteins with potentially nearby locations of each taxa
+    for (tax_name in tax_names){
+      print(tax_name)
+      ### Read in calculated SCC data (SCC of taxa-based normalized abundance of single species)
+      pep_scc_file_name <- paste0(individual, "_", tax_name, "_fold_change_wide.out_SCC_correlation.out")
+      pep_scc_file <- file.path(infile_path, pep_scc_file_name)
+      pep_scc_data <- read.table(pep_scc_file, header = TRUE, sep = "\t")
+      head(pep_scc_data)
+      nrow(pep_scc_data)
+      
+      
+      ### Attach peptide protein source to peptide pairs
+      pep_scc_data <- dplyr::left_join(pep_scc_data, pep_prot_source, by = c("Peptide_1" = "Peptide"))
+      pep_scc_data <- pep_scc_data %>% rename("Peptide_1_Protein_Source" = "Protein_Source")
+      pep_scc_data <- dplyr::left_join(pep_scc_data, pep_prot_source, by = c("Peptide_2" = "Peptide"))
+      pep_scc_data <- pep_scc_data %>% rename("Peptide_2_Protein_Source" = "Protein_Source")
+      head(pep_scc_data)
+      nrow(pep_scc_data)
+      
+      
+      ### Calculte genome distance of peptide pairs
+      pep_scc_data <- pep_scc_data %>%
+        mutate(Peptide_1_Protein_Number = as.numeric(str_extract(Peptide_1_Protein_Source, "(?<=_)[0-9]+")),
+               Peptide_2_Protein_Number = as.numeric(str_extract(Peptide_2_Protein_Source, "(?<=_)[0-9]+")),
+               Distance = abs(Peptide_1_Protein_Number - Peptide_2_Protein_Number))
+      summary(pep_scc_data$Distance)
+      
+      
+      # Seperate top SCC pairs and other SCC pairs
+      scc_threshold <- quantile(pep_scc_data$SCC, top_scc_threshold)
+      print(scc_threshold)
+      
+      # Top SCC pairs
+      filtered_pep_scc_data <- pep_scc_data %>% filter(SCC >= scc_threshold)
+      summary(filtered_pep_scc_data$Distance)
+      filtered_pep_scc_data <- filtered_pep_scc_data %>% select(Distance)
+      filtered_pep_scc_data$Individual <- individual
+      filtered_pep_scc_data$Genome <- tax_name
+      filtered_pep_scc_data$Type <- "Top_SCC_Pairs"
+      
+      # # Other SCC pairs
+      # other_pep_scc_data <- pep_scc_data %>% filter(SCC < scc_threshold)
+      # summary(other_pep_scc_data$Distance)
+      # other_pep_scc_data <- other_pep_scc_data  %>% select(Distance)
+      # other_pep_scc_data$Individual <- individual
+      # other_pep_scc_data$Genome <- tax_name
+      # other_pep_scc_data$Type <- "Other_SCC_pairs"
+      
+      # Combining results from different genomes from differnt individuals
+      # print("Expanding all protein data.")
+      # print(nrow(filtered_pep_scc_data))
+      # print(nrow(other_pep_scc_data))
+      if(nrow(filtered_pep_scc_data) > 0) {
+          individual_all_prot_distance_data <- rbind(individual_all_prot_distance_data, filtered_pep_scc_data)
+      }
+    
+      # if(nrow(other_pep_scc_data) > 0) {
+      #     individual_all_prot_distance_data <- rbind(individual_all_prot_distance_data, other_pep_scc_data)
+      # }
+      
+      
+      # Remove peptide from same proteins
+      diff_prot_pep_scc_data <- pep_scc_data %>% filter(Peptide_1_Protein_Source != Peptide_2_Protein_Source)
+      summary(diff_prot_pep_scc_data$Distance)
+   
+      # Top SCC pairs (After removing peptides from the same protein)
+      filtered_diff_prot_pep_scc_data <- diff_prot_pep_scc_data %>% filter(SCC >= scc_threshold)
+      #summary(filtered_diff_prot_pep_scc_data$Distance)
+      filtered_diff_prot_pep_scc_data <- filtered_diff_prot_pep_scc_data %>% select(Distance)
+      filtered_diff_prot_pep_scc_data$Individual <- individual
+      filtered_diff_prot_pep_scc_data$Genome <- tax_name
+      filtered_diff_prot_pep_scc_data$Type <- "Top_SCC_pairs"
+      filtered_diff_prot_pep_scc_data$Top_percentage <- as.character(1 - top_scc_threshold)
+      
+      if(nrow(filtered_diff_prot_pep_scc_data) > 0) {
+          individual_diff_prot_distance_data <- rbind(individual_diff_prot_distance_data, filtered_diff_prot_pep_scc_data)
+      }
+      
+      # if(nrow(other_diff_prot_pep_scc_data) > 0) {
+      #     individual_diff_prot_distance_data <- rbind(individual_diff_prot_distance_data, other_diff_prot_pep_scc_data)
+      # }
+    }
+    
+    ### Sta the percentage of nearby peptide pairs
+    # Create empty data frame
+    near_location_sta <- data.frame(Individual = character(), Genome = character(), Type = character(), Pairs = numeric(), Nearby_Pairs = numeric(), stringsAsFactors = FALSE)
+    
+    # Count the number of rows for each Genome and rows with Distance <= loc_threshold
+    near_location_sta <- individual_diff_prot_distance_data %>%
+      group_by(Individual, Genome, Type) %>%
+      summarise(
+        Pairs = n(),
+        Nearby_Pairs = sum(Distance <= loc_threshold & Distance > 0)
+      ) %>%
+      ungroup()
+    
+    near_location_sta$Percentage <- near_location_sta$Nearby_Pairs/near_location_sta$Pairs
+    near_location_sta$Top_Percentage <- as.character(1 - top_scc_threshold)
+    # View results
+    head(near_location_sta)
+    #tail(near_location_sta)
+    nrow(near_location_sta)
+    all_near_location_sta <- rbind(all_near_location_sta, near_location_sta)
+  }
+}
+
+head(all_near_location_sta)
+#tail(near_location_sta)
+nrow(all_near_location_sta)
+
+all_near_location_sta %>% arrange(desc(Percentage))
+
+
+
+### Boxplot for comparing the percentage of peptide pairs from same/different protein(s) in top SCC pairs at different top percentage thresholds
+# Figure title: "Comparison of the percentages of peptides from the same protein and different proteins in top scc pairs and other scc pairs from all studied species in all six individuals".
+all_near_location_sta$Top_Percentage <- as.numeric(as.character(all_near_location_sta$Top_Percentage))
+all_near_location_sta$Top_Percentage <- round(all_near_location_sta$Top_Percentage, 2)
+all_near_location_sta$Top_Percentage <- as.factor(all_near_location_sta$Top_Percentage)
+# table(protein_source_sta$Type)
+comparisons <- list(c("Other_SCC_pairs", "Top_SCC_pairs"))
+
+myplot <- ggplot(all_near_location_sta, aes(x = Top_Percentage, y = Percentage, group = Top_Percentage)) +
+  geom_boxplot(width = 0.2, position = position_dodge(width = 0.75), outlier.shape = NA) +
+  theme_bw() +
+  geom_point(position = position_dodge(width = 0.75), size = 1.5, alpha = 0.6) +
+  geom_line(aes(group = interaction(Individual, Genome)), color = "lightgrey") + 
+  labs(x = "SCC percentage threshold", y = "Percentage of peptide pairs from proteins with nearby locations") +
+  stat_compare_means(comparisons = comparisons,
+                     method = "wilcox.test", label = "p.format", size = 6,
+                     vjust = 0.5) +
+  #scale_y_continuous(breaks = seq(0, 0.6, by = 0.1), limits = c(0, 0.6)) +
+  theme(axis.text.x = element_text(size = 12, color = "black"), axis.title.x = element_text(size = 14),axis.text.y = element_text(size = 12, color = "black"), axis.title.y = element_text(size = 14))
+myplot
+
+
+
+### Compare the percentage of peptides from proteins with nearby location in the peptide correlation network (Top 5% SCC pairs) and the percentage from all peptide pairs.
+# Selected data at specific percetages
+selected_all_near_location_sta <- all_near_location_sta %>% filter(Top_Percentage == "0.05" | Top_Percentage == "1")
+
+# Rename x-axis types names
+selected_all_near_location_sta <- selected_all_near_location_sta %>%
+  mutate(Top_Percentage = recode(Top_Percentage, 
+                       "0.05" = "Network pairs", 
+                       "1" = "All pairs"))
+selected_all_near_location_sta
+
+
+
+# Calculate Cohen's d efFect size measure (library(effsize))
+network_group <- selected_all_protein_source_sta %>% filter(Top_percentage == "Network pairs") %>% select(Percentage) %>% pull()
+all_pep_group <- selected_all_protein_source_sta %>% filter(Top_percentage == "All pairs") %>% select(Percentage) %>% pull()
+differences <- network_group - all_pep_group
+cohen_d_paired <- mean(differences) / sd(differences)
+print(paste("Cohen's d for paired samples:", cohen_d_paired))
+cohen_d_paired_formatted <- format(cohen_d_paired, digits = 2)
+
+
+
+# Boxplot
+myplot <- ggplot(selected_all_near_location_sta, aes(x = Top_Percentage, y = Percentage, group = Top_Percentage)) +
+  geom_boxplot(width = 0.35, position = position_dodge(width = 0.75), outlier.shape = NA, color = "black", fill = "grey") +
+  theme_bw() +
+  ylim(0, 0.55) +
+  geom_point(position = position_dodge(width = 0.75), size = 1.5, alpha = 0.8) +
+  geom_line(aes(group = interaction(Individual, Genome)), color = "lightgrey") + 
+  labs(x = "Sources of peptide pairs", y = "Percentage of peptide pairs from proteins \nwith potential nearby genome locations") +
+  stat_compare_means(method = "wilcox.test", label = "p.signif", paired = TRUE, size = 4,
+                     vjust = 0.5, label.y = 0.4, label.x = 1.5) +
+  #scale_y_continuous(breaks = seq(0, 0.6, by = 0.1), limits = c(0, 0.6)) +
+  theme(axis.text.x = element_text(size = 12, color = "black"), axis.title.x = element_text(size = 14),axis.text.y = element_text(size = 12, color = "black"), axis.title.y = element_text(size = 14)) +
+  # geom_signif(comparisons = list(c("Network pairs", "All pairs")), 
+  #             map_signif_level = TRUE, textsize = 4, y_position = max(selected_all_near_location_sta$Percentage) * 0.95, test = "wilcox.test") +
+  annotate("text", x = 1.5, y = 0.48, label = paste0("Effect size = ", cohen_d_paired_formatted, "\n(Cohen's d)"), size = 4)
+myplot
+
+
+
+
+# Saving the plot
+tiff_file_name <- paste0(individual, "_TNPA_network_nearby_prot_percentage.tiff")
+ggsave(tiff_file_name, myplot, width = 4, height = 4, units = "in", dpi = 300)
+svg_file_name <- paste0(individual, "_TNPA_network_nearby_prot_percentage.svg")
+ggsave(svg_file_name, myplot, width = 4, height = 4, units = "in")
+pdf_file_name <- paste0(individual, "_TNPA_network_nearby_prot_percentage.pdf")
+ggsave(pdf_file_name, myplot, width = 4, height = 4, units = "in")
+eps_file_name <- paste0(individual, "_TNPA_network_nearby_prot_percentage.eps")
+ggsave(eps_file_name, myplot, width = 4, height = 4, units = "in")
+
+```
+
+
+
+### Figure 7A. Compare the percentage of functional unknown peptides in the each species and in network of each species
+```{r}
+library(dplyr)
+library(data.table)
+setwd("../data/Drugs_dataset/")
+# individual <- "V45"
+# tax_name <- "MGYG000000223"
+
+### Sta the number of functional unknown peptides from each speices
+sp_all_pep_func_anno_status_sta <- data.frame(Individual = as.character(), Genome = as.character(), Total_number_of_peptides = as.numeric(), annotated_peptides = as.numeric(), unannotated_peptides = as.numeric())
+
+# individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# individuals <- c("V52")
+individual <- "V52"
+# for (individual in individuals){
+  ## Read in peptide functional annotation based on refined peptide sources
+  pep_func_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_func_anno.txt")
+  pep_func_anno_file <- file.path("rm_mbr_individual_pep_taxa_refine", "Refined_functional_anno", individual, pep_func_anno_file_name)
+  pep_func_anno <- fread(pep_func_anno_file, sep = "\t", fill = TRUE)
+  head(pep_func_anno)
+  
+  # Set COG_Family column by extracting information from the eggNOG_OGs column
+  pep_func_anno <- pep_func_anno %>%
+    mutate(COG_Family = if_else(
+      grepl("^COG", eggNOG_OGs),  # Check if eggNOG_OGs column starts with COG
+      sub("(@.*)", "", eggNOG_OGs),  # Extract content from COG to first @ character
+      "-"  # Use "-" if no match
+    ))
+  
+  # 查看结果
+  head(pep_func_anno)
+  table(pep_func_anno$COG_Family)
+  
+  
+  ## Mark annotated and unannotated status of peptide pairs
+  # # Unannotated standard
+  # COG_Category == "-"|COG_Category == "S"
+  # KEGG_ko = "-"
+  # COG_Family = "-"
+  pep_func_anno <- pep_func_anno %>%
+    mutate(anno_type = if_else(
+      # KEGG_Reaction is actually KEGG_ko
+      KEGG_Reaction == "-" & COG_Family == "-" & (COG_Category == "-"| COG_Category == "S"),  
+      "Unannotated",  
+      "Annotated"  
+    ))
+  pep_func_anno_status <- pep_func_anno %>% select(Peptide, anno_type)
+  head(pep_func_anno_status)
+  table(pep_func_anno_status$anno_type)
+  nrow(pep_func_anno_status)
+  
+  
+  # Get tax_names from the directory
+  # tax_name <- "MGYG000000099"
+  # tax_name <- "MGYG000000223"
+  #tax_name <- "MGYG000002478"
+  infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  for (tax_name in tax_names){
+    ### Initial a dataframe to save annotation status
+    single_sta <- data.frame(Individual = as.character(), Genome = as.character(), Total_number_of_peptides = as.numeric(), annotated_peptides = as.numeric(), unannotated_peptides = as.numeric())
+    
+    
+    ## Read in peptide network degree sta file
+    peptides_quant_file_name <- paste0(individual, "_", tax_name, "_normalized_peptide_abundance.out")
+    peptides_quant_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, peptides_quant_file_name)
+    peptides_quant_data <- read.table(peptides_quant_file, header = TRUE, sep = "\t")
+    nrow(peptides_quant_data)
+    peptides_list <- peptides_quant_data %>% select(Peptide)
+    
+    
+    # Add annotation status to the peptide list
+    peptides_list <- dplyr::left_join(peptides_list, pep_func_anno_status, by = "Peptide")
+    head(peptides_list)
+    nrow(peptides_list)
+    table(peptides_list$anno_type)
+    anno_type_counts <- peptides_list %>%
+      count(anno_type)
+    
+    # 确保anno_type_counts中包含所有需要的值
+    if(!("Annotated" %in% anno_type_counts$anno_type)){
+      anno_type_counts <- bind_rows(anno_type_counts, data.frame(anno_type = "Annotated", n = 0))
+    }
+    if(!("Unannotated" %in% anno_type_counts$anno_type)){
+      anno_type_counts <- bind_rows(anno_type_counts, data.frame(anno_type = "Unannotated", n = 0))
+    }
+    
+    
+    # Sta the number of peptides with different annotation status
+    all_pep_num <- nrow(peptides_list)
+    anno_pep_num <- anno_type_counts %>% filter(anno_type == "Annotated") %>% pull(n)
+    unanno_pep_num <- anno_type_counts %>% filter(anno_type == "Unannotated") %>% pull(n)
+    
+    # Saving the sta result of single taxa 
+    single_sta <- data.frame(Individual = as.character(individual), Genome = as.character(tax_name), Total_number_of_peptides = as.numeric(all_pep_num), annotated_peptides = as.numeric(anno_pep_num), unannotated_peptides = as.numeric(unanno_pep_num))
+    
+    # Combing all the sta results
+    sp_all_pep_func_anno_status_sta  <- rbind(sp_all_pep_func_anno_status_sta, single_sta)
+    }
+# }
+  
+head(sp_all_pep_func_anno_status_sta)
+
+# Output Sta resutls
+sp_all_pep_func_anno_status_file_name <- "Species_all_Peptide_func_anno_status_sta.out"
+sp_all_pep_func_anno_status_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", "V52", "TN_intensity_Gephi_Networks_SCC_top5_percent", sp_all_pep_func_anno_status_file_name)
+write.table(sp_all_pep_func_anno_status_sta, sp_all_pep_func_anno_status_file, sep = "\t", quote = FALSE, row.names = FALSE)
+
+
+
+
+
+
+### Sta the number of functional unknown peptides from each networks
+network_pep_func_anno_status_sta <- data.frame(Individual = as.character(), Genome = as.character(), Total_number_of_peptides = as.numeric(), annotated_peptides = as.numeric(), unannotated_peptides = as.numeric())
+
+# individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# individuals <- c("V52")
+individual <- "V52"
+# for (individual in individuals){
+  ## Read in peptide functional annotation based on refined peptide sources
+  pep_func_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_func_anno.txt")
+  pep_func_anno_file <- file.path("rm_mbr_individual_pep_taxa_refine", "Refined_functional_anno", individual, pep_func_anno_file_name)
+  pep_func_anno <- fread(pep_func_anno_file, sep = "\t", fill = TRUE)
+  head(pep_func_anno)
+  
+  # Set COG_Family column by extracting information from the eggNOG_OGs column
+  pep_func_anno <- pep_func_anno %>%
+    mutate(COG_Family = if_else(
+      grepl("^COG", eggNOG_OGs),  
+      sub("(@.*)", "", eggNOG_OGs),  
+      "-"   
+    ))
+  
+  # 查看结果
+  head(pep_func_anno)
+  table(pep_func_anno$COG_Family)
+  
+  
+  ## Mark annotated and unannotated status of peptide pairs
+  # # Unannotated standard
+  # COG_Category == "-"|COG_Category == "S"
+  # KEGG_ko = "-"
+  # COG_Family = "-"
+  pep_func_anno <- pep_func_anno %>%
+    mutate(anno_type = if_else(
+      # KEGG_Reaction is actually KEGG_ko
+      KEGG_Reaction == "-" & COG_Family == "-" & (COG_Category == "-"| COG_Category == "S"),  
+      "Unannotated",  
+      "Annotated"  
+    ))
+  pep_func_anno_status <- pep_func_anno %>% select(Peptide, anno_type)
+  head(pep_func_anno_status)
+  table(pep_func_anno_status$anno_type)
+  nrow(pep_func_anno_status)
+  
+  
+  # Get tax_names from the directory
+  # tax_name <- "MGYG000000099"
+  # tax_name <- "MGYG000000223"
+  # tax_name <- "MGYG000002478"
+  infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  for (tax_name in tax_names){
+    ### Initial a dataframe to save annotation status
+    single_sta <- data.frame(Individual = as.character(), Genome = as.character(), Total_number_of_peptides = as.numeric(), annotated_peptides = as.numeric(), unannotated_peptides = as.numeric())
+    
+    
+    ## Read in peptide network degree sta file
+    peptides_quant_file_name <- paste0(individual, "_", tax_name, "_top5_anno_networks_node_degree_sta.out")
+    peptides_quant_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "TN_intensity_Gephi_Networks_SCC_top5_percent", peptides_quant_file_name)
+    peptides_quant_data <- read.table(peptides_quant_file, header = TRUE, sep = "\t")
+    # nrow(peptides_quant_data)
+    # peptides_list <- peptides_quant_data %>% select(Peptide)
+    
+    
+    # Add annotation status to the peptide list
+    peptides_list <- dplyr::left_join(peptides_list, pep_func_anno_status, by = "Peptide")
+    head(peptides_list)
+    nrow(peptides_list)
+    table(peptides_list$anno_type)
+    anno_type_counts <- peptides_list %>%
+      count(anno_type)
+    
+    # Ensure anno_type_counts contains all required values
+    if(!("Annotated" %in% anno_type_counts$anno_type)){
+      anno_type_counts <- bind_rows(anno_type_counts, data.frame(anno_type = "Annotated", n = 0))
+    }
+    if(!("Unannotated" %in% anno_type_counts$anno_type)){
+      anno_type_counts <- bind_rows(anno_type_counts, data.frame(anno_type = "Unannotated", n = 0))
+    }
+    
+    
+    # Sta the number of peptides with different annotation status
+    all_pep_num <- nrow(peptides_list)
+    anno_pep_num <- anno_type_counts %>% filter(anno_type == "Annotated") %>% pull(n)
+    unanno_pep_num <- anno_type_counts %>% filter(anno_type == "Unannotated") %>% pull(n)
+    
+    # Saving the sta result of single taxa 
+    single_sta <- data.frame(Individual = as.character(individual), Genome = as.character(tax_name), Total_number_of_peptides = as.numeric(all_pep_num), annotated_peptides = as.numeric(anno_pep_num), unannotated_peptides = as.numeric(unanno_pep_num))
+    
+    # Combing all the sta results
+    network_pep_func_anno_status_sta <- rbind(network_pep_func_anno_status_sta, single_sta)
+    }
+# }
+  
+  
+# Output Sta resutls
+head(network_pep_func_anno_status_sta)
+network_pep_func_anno_status_file_name <- "Network_Peptide_func_anno_status_sta.out"
+network_pep_func_anno_status_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", "V52", "TN_intensity_Gephi_Networks_SCC_top5_percent", network_pep_func_anno_status_file_name)
+write.table(network_pep_func_anno_status_sta, network_pep_func_anno_status_file, sep = "\t", quote = FALSE, row.names = FALSE)
+
+
+
+
+### Compare the percentage of functional unknown peptides in the network and the percentage of functional unknown peptides in all identified peptides from the species.
+# Selected data at specific percetages Combine percentage data for peptides in the network and all peptides from the species
+network_pep_func_anno_status_sta$Type <- "In the network"
+sp_all_pep_func_anno_status_sta$Type <- "All from the species"
+pep_func_anno_status_sta <- rbind(network_pep_func_anno_status_sta, sp_all_pep_func_anno_status_sta)
+
+# Calculate the percentage of functional unknown peptides
+pep_func_anno_status_sta$Percentage <-  pep_func_anno_status_sta$unannotated_peptides/pep_func_anno_status_sta$Total_number_of_peptides
+head(pep_func_anno_status_sta)
+
+# Boxplot
+myplot <- ggplot(pep_func_anno_status_sta, aes(x = Type, y = Percentage, group = Type)) +
+  geom_boxplot(width = 0.35, position = position_dodge(width = 0.75), outlier.shape = NA, color = "black", fill = "grey") +
+  theme_bw() +
+  geom_point(position = position_dodge(width = 0.75), size = 1.5, alpha = 0.8) + ylim(0, 0.18) + 
+  geom_line(aes(group = interaction(Individual, Genome)), color = "lightgrey") + 
+  labs(x = "Peptide sets", y = "Percentage of peptide from\nfunctional unknown proteins") +
+  # stat_compare_means(comparisons = comparisons, 
+  #                    method = "wilcox.test", label = "p.format", size = 6,
+  #                    vjust = 0.5) + 
+  #scale_y_continuous(breaks = seq(0, 0.6, by = 0.1), limits = c(0, 0.6)) +
+  theme(axis.text.x = element_text(size = 12, color = "black"), axis.title.x = element_text(size = 14),axis.text.y = element_text(size = 12, color = "black"), axis.title.y = element_text(size = 14)) +
+  geom_signif(comparisons = list(c("In the network", "All from the species")), test = "t.test",
+              map_signif_level = TRUE, textsize = 4, y_position = max(pep_func_anno_status_sta$Percentage) * 0.95)
+myplot
+
+
+# Saving the plot
+tiff_file_name <- paste0(individual, "_TNPA_network_unknown_prot_pep_percentage.tiff")
+ggsave(tiff_file_name, myplot, width = 4, height = 4, units = "in", dpi = 300)
+svg_file_name <- paste0(individual, "_TNPA_network_unknown_prot_pep_percentage.svg")
+ggsave(svg_file_name, myplot, width = 4, height = 4, units = "in")
+pdf_file_name <- paste0(individual, "_TNPA_network_unknown_prot_pep_percentage.pdf")
+ggsave(pdf_file_name, myplot, width = 4, height = 4, units = "in")
+eps_file_name <- paste0(individual, "_TNPA_network_unknown_prot_pep_percentage.eps")
+ggsave(eps_file_name, myplot, width = 4, height = 4, units = "in")
+
+
+
+
+
+
+
+### Sta the average number of degrees in the network & Sta the number of degrees of functional unknown peptides
+network_pep_func_anno_degree_sta <- data.frame(Peptide = as.character(), Degree = as.numeric(), Annotation_Type = as.character(),Individual = as.character(), Genome = as.character())
+
+# individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# individuals <- c("V52")
+individual <- "V52"
+# for (individual in individuals){
+  ## Read in peptide functional annotation based on refined peptide sources
+  pep_func_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_func_anno.txt")
+  pep_func_anno_file <- file.path("rm_mbr_individual_pep_taxa_refine", "Refined_functional_anno", individual, pep_func_anno_file_name)
+  pep_func_anno <- fread(pep_func_anno_file, sep = "\t", fill = TRUE)
+  head(pep_func_anno)
+  
+  # Set COG_Family column by extracting information from the eggNOG_OGs column
+  pep_func_anno <- pep_func_anno %>%
+    mutate(COG_Family = if_else(
+      grepl("^COG", eggNOG_OGs),  
+      sub("(@.*)", "", eggNOG_OGs),  
+      "-"  
+    ))
+  
+  # 查看结果
+  head(pep_func_anno)
+  table(pep_func_anno$COG_Family)
+  
+  
+  ## Mark annotated and unannotated status of peptide pairs
+  # # Unannotated standard
+  # COG_Category == "-"|COG_Category == "S"
+  # KEGG_ko = "-"
+  # COG_Family = "-"
+  pep_func_anno <- pep_func_anno %>%
+    mutate(Annotation_Type = if_else(
+      # KEGG_Reaction is actually KEGG_ko
+      KEGG_Reaction == "-" & COG_Family == "-" & (COG_Category == "-"| COG_Category == "S"),  
+      "Unannotated",  
+      "Annotated"  
+    ))
+  pep_func_anno_status <- pep_func_anno %>% select(Peptide, Annotation_Type)
+  head(pep_func_anno_status)
+  table(pep_func_anno_status$Annotation_Type)
+  nrow(pep_func_anno_status)
+  
+  
+  # Get tax_names from the directory
+  # tax_name <- "MGYG000000099"
+  # tax_name <- "MGYG000000223"
+  # tax_name <- "MGYG000002478"
+  infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  for (tax_name in tax_names){
+    ### Initial a dataframe to save annotation status
+    single_sta <- data.frame(Individual = as.character(), Genome = as.character(), Total_number_of_peptides = as.numeric(), annotated_peptides = as.numeric(), unannotated_peptides = as.numeric())
+    
+    
+    ## Read in peptide network degree sta file
+    peptides_quant_file_name <- paste0(individual, "_", tax_name, "_top5_anno_networks_node_degree_sta.out")
+    peptides_quant_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "TN_intensity_Gephi_Networks_SCC_top5_percent", peptides_quant_file_name)
+    peptides_quant_data <- read.table(peptides_quant_file, header = TRUE, sep = "\t")
+    # nrow(peptides_quant_data)
+    # peptides_list <- peptides_quant_data %>% select(Peptide)
+    
+    
+    # Add annotation status to the peptide list
+    peptides_quant_data <- dplyr::left_join(peptides_quant_data, pep_func_anno_status, by = "Peptide")
+    head(peptides_quant_data)
+    nrow(peptides_quant_data)
+    table(peptides_quant_data$Annotation_Type)
+    
+    peptides_quant_data$Individual <- individual
+    peptides_quant_data$Genome <- tax_name
+    
+    # Combing all peptides
+    network_pep_func_anno_degree_sta <- rbind(network_pep_func_anno_degree_sta, peptides_quant_data)
+    }
+# }
+  
+head(network_pep_func_anno_degree_sta)  
+
+
+# Boxplot to compare the number of edges linked to annotated peptides and unannotated peptides
+myplot <- ggplot(network_pep_func_anno_degree_sta, aes(x = Annotation_Type, y = Degree, group = Annotation_Type)) +
+  geom_boxplot(width = 0.35, position = position_dodge(width = 0.75), outlier.shape = NA, color = "black", fill = "grey") +
+  theme_bw() + ylim(0,60) + 
+  #geom_point(position = position_dodge(width = 0.75), size = 1.5, alpha = 0.8) + 
+  #geom_line(aes(group = interaction(Individual, Genome)), color = "lightgrey") + 
+  labs(x = "Peptide sets", y = "Number of edges connected to the peptide") +
+  # stat_compare_means(comparisons = comparisons, 
+  #                    method = "wilcox.test", label = "p.format", size = 6,
+  #                    vjust = 0.5) + 
+  #scale_y_continuous(breaks = seq(0, 0.6, by = 0.1), limits = c(0, 0.6)) +
+  theme(axis.text.x = element_text(size = 12, color = "black"), axis.title.x = element_text(size = 14),axis.text.y = element_text(size = 12, color = "black"), axis.title.y = element_text(size = 14)) +
+  geom_signif(comparisons = list(c("Annotated", "Unannotated")),
+              map_signif_level = TRUE, textsize = 4, y_position = 45)
+myplot
+#, y_position = max(network_pep_func_anno_degree_sta$Degree) * 0.95
+
+network_unanno_pep_func_anno_degree_sta <- network_pep_func_anno_degree_sta %>% filter(Annotation_Type == "Unannotated")
+
+
+# Boxplot to compare the number of edges connected to unannotated peptides from different genomes
+myplot <- ggplot(network_unanno_pep_func_anno_degree_sta, aes(x = Genome, y = Degree, group = Genome)) +
+  geom_boxplot(width = 0.35, position = position_dodge(width = 0.75), outlier.shape = NA, color = "black", fill = "grey") +
+  theme_bw() + ylim(0,80) + 
+  #geom_point(position = position_dodge(width = 0.75), size = 1.5, alpha = 0.8) + 
+  labs(x = "Genomes", y = "Number of edges connected to the peptide from unannotated proteins") +
+  # stat_compare_means(comparisons = comparisons, 
+  #                    method = "wilcox.test", label = "p.format", size = 6,
+  #                    vjust = 0.5) + 
+  #scale_y_continuous(breaks = seq(0, 0.6, by = 0.1), limits = c(0, 0.6)) +
+  theme(axis.text.x = element_text(size = 12, color = "black", angle = 90, hjust = 1), axis.title.x = element_text(size = 14),axis.text.y = element_text(size = 12, color = "black"), axis.title.y = element_text(size = 14))
+  
+myplot
+
+
+
+
+
+
+# Output Sta results
+network_pep_func_anno_status_file_name <- "Network_Peptide_func_anno_status_sta.out"
+network_pep_func_anno_status_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", "V52", "TN_intensity_Gephi_Networks_SCC_top5_percent", network_pep_func_anno_status_file_name)
+write.table(network_pep_func_anno_status_sta, network_pep_func_anno_status_file, sep = "\t", quote = FALSE, row.names = FALSE)
+
+```
+
+
+### Figure 7B. Sta the percentage of linkages between functional known peptides and functional peptides across different species
+```{r}
+### Sta the average number of degrees in the network & Sta the number of degrees of functional unknown peptides
+network_edge_anno_status_sta <- data.frame(Peptide_1 = as.character(), Peptide_2 = as.character(), SCC = as.numeric(), Pep1_Annotation_Type = as.character(), Pep2_Annotation_Type = as.character(), Edge_Type = as.character(), Individual = as.character(), Genome = as.character())
+
+# individuals <- c("V45", "V46", "V47", "V48", "V49", "V52")
+# individuals <- c("V52")
+individual <- "V52"
+# for (individual in individuals){
+  ## Read in peptide functional annotation based on refined peptide sources
+  pep_func_anno_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_func_anno.txt")
+  pep_func_anno_file <- file.path("rm_mbr_individual_pep_taxa_refine", "Refined_functional_anno", individual, pep_func_anno_file_name)
+  pep_func_anno <- fread(pep_func_anno_file, sep = "\t", fill = TRUE)
+  head(pep_func_anno)
+  
+  # Set COG_Family column by extracting information from the eggNOG_OGs column
+  pep_func_anno <- pep_func_anno %>%
+    mutate(COG_Family = if_else(
+      grepl("^COG", eggNOG_OGs),  
+      sub("(@.*)", "", eggNOG_OGs),  
+      "-"  
+    ))
+  
+  # 查看结果
+  head(pep_func_anno)
+  table(pep_func_anno$COG_Family)
+  
+  
+  ## Mark annotated and unannotated status of peptide pairs
+  # # Unannotated standard
+  # COG_Category == "-"|COG_Category == "S"
+  # KEGG_ko = "-"
+  # COG_Family = "-"
+  pep_func_anno <- pep_func_anno %>%
+    mutate(Annotation_Type = if_else(
+      # KEGG_Reaction is actually KEGG_ko
+      KEGG_Reaction == "-" & COG_Family == "-" & (COG_Category == "-"| COG_Category == "S"), 
+      "Unannotated", 
+      "Annotated" 
+    ))
+  pep_func_anno_status <- pep_func_anno %>% select(Peptide, Annotation_Type)
+  head(pep_func_anno_status)
+  table(pep_func_anno_status$Annotation_Type)
+  nrow(pep_func_anno_status)
+  
+  
+  # Get tax_names from the directory
+  # tax_name <- "MGYG000000099"
+  # tax_name <- "MGYG000000223"
+  tax_name <- "MGYG000002478"
+  infile_path <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Calculated_SCC")
+  file_names <- list.files(infile_path)
+  tax_names <- unique(gsub(".*(MGYG[^_]*).*", "\\1", file_names))
+  print(tax_names)
+  
+  for (tax_name in tax_names){
+    ### Initial a dataframe to save annotation status
+    single_sta <- data.frame(Individual = as.character(), Genome = as.character(), Total_number_of_peptides = as.numeric(), annotated_peptides = as.numeric(), unannotated_peptides = as.numeric())
+    
+    
+    ## Read in peptide network degree sta file
+    peptides_quant_file_name <- paste0(individual, "_", tax_name, "SCC_top5_network_edges.out")
+    peptides_quant_file <- file.path("rm_mbr_individual_pep_taxa_normal_intensity", "Sparsity02_Networks", individual, "Networks_SCC_top5_percent", peptides_quant_file_name)
+    peptides_quant_data <- read.table(peptides_quant_file, header = TRUE, sep = "\t")
+    
+    
+    # Add annotation status to the peptide list
+    peptides_quant_data <- dplyr::left_join(peptides_quant_data, pep_func_anno_status, by = c("Peptide_1" = "Peptide"))
+    
+    # Rename Annotation_Type column to Pep1_Annotation_Type
+    peptides_quant_data <- peptides_quant_data %>%
+      dplyr::rename(Pep1_Annotation_Type = Annotation_Type)
+    
+    # Add annotation status to the peptide list
+    peptides_quant_data <- dplyr::left_join(peptides_quant_data, pep_func_anno_status, by = c("Peptide_2" = "Peptide"))
+    
+    # Rename Annotation_Type column to Pep2_Annotation_Type
+    peptides_quant_data <- peptides_quant_data %>%
+      dplyr::rename(Pep2_Annotation_Type = Annotation_Type)
+    
+    # Create Edge_Type column using mutate and case_when
+    peptides_quant_data <- peptides_quant_data %>%
+      mutate(Edge_Type = case_when(
+        Pep1_Annotation_Type == "Annotated" & Pep2_Annotation_Type == "Annotated" ~ "Both_annotated",
+        Pep1_Annotation_Type == "Unannotated" & Pep2_Annotation_Type == "Unannotated" ~ "Both_unannotated",
+        Pep1_Annotation_Type == "Annotated" & Pep2_Annotation_Type == "Unannotated" ~ "One_annotated_one_unannotated",
+        Pep1_Annotation_Type == "Unannotated" & Pep2_Annotation_Type == "Annotated" ~ "One_annotated_one_unannotated"
+      ))
+        
+    
+    
+    head(peptides_quant_data)
+    nrow(peptides_quant_data)
+    table(peptides_quant_data$Edge_Type)
+    
+    peptides_quant_data$Individual <- individual
+    peptides_quant_data$Genome <- tax_name
+    
+    # Combine all peptides
+    network_edge_anno_status_sta <- rbind(network_edge_anno_status_sta, peptides_quant_data)
+    }
+# }
+  
+head(network_edge_anno_status_sta)
+
+
+network_edge_anno_status_percentage <- network_edge_anno_status_sta %>%
+  group_by(Individual, Genome) %>%
+  summarise(
+    Total = n(),  # Calculate total count in each group
+    One_annotated_one_unannotated = sum(Edge_Type == "One_annotated_one_unannotated")  # Count One_annotated_one_unannotated
+  ) %>%
+  mutate(
+    Prop_One_annotated_one_unannotated = One_annotated_one_unannotated / Total  # Calculate proportion
+  )
+network_edge_anno_status_percentage
+
+
+
+# Barplot to compare the percentages of edges connecting peptides from protein with known function and peptides from protein with unknown functions from different genomes
+# Create bar plot
+myplot <- ggplot(network_edge_anno_status_percentage, aes(x = reorder(Genome, -Prop_One_annotated_one_unannotated), y = Prop_One_annotated_one_unannotated)) +
+  geom_bar(stat = "identity", fill = "darkgrey", color = "white", size = 0.5) + # Adjust bar color and border
+  scale_y_continuous(expand = c(0, 0), limits = c(0, max(network_edge_anno_status_percentage$Prop_One_annotated_one_unannotated) * 1.1)) + # Adjust y-axis range and padding
+  theme_bw() + # Use minimal theme
+  theme(
+    axis.title.x = element_text(size = 14, vjust = -0.5), # x-axis title style
+    axis.title.y = element_text(size = 14), # y-axis title style
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1), # x-axis label style
+    axis.text.y = element_text(size = 12) # y-axis label style
+  ) +
+  labs(
+    x = "Genomes", # x-axis label
+    y = "Percentage of egdes connenting one annotated\nand one unannotated peptide" # y-axis label
+  ) +
+  geom_text(aes(label = sprintf("%1.2f", Prop_One_annotated_one_unannotated)), # Add value labels
+            position = position_stack(vjust = 0.5),
+            vjust = 0.5,
+            color = "white",
+            size = 4)
+
+# Print bar plot
+print(myplot)

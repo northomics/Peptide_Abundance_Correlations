@@ -1,0 +1,779 @@
+---
+title: "Machine_Learning_Peptide_Tax_Assign"
+author: "ZhongzhiSun"
+date: "2024-11-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = normalizePath("../data/Drugs_dataset"))
+```
+
+
+---
+title: "Applying Machine Learning Models to Peptide Abundance Data for Petpide Taxa Assignment"
+author: "ZhongzhiSun"
+date: "2024-09-18"
+output: 
+  html_document: default
+  #pdf_document: default
+  #word_document:
+  #  reference_docx: docx_template.docx
+---
+
+Outline
+==========
+
+Studied family clusters: Burkholderiaceae, Eggerthellaceae, Bacteroidaceae...
+
+Studied machine learning models: SVM, RandomForest(RF)
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Read in peptide abundance correlation matrix
+```{r, echo = FALSE, eval = TRUE}
+library(dplyr)
+library(data.table)
+library(ComplexHeatmap)
+library(circlize)
+library(ggsci)
+library(ggplot2)
+
+individual <- "V52"
+
+### Read in correlation matrix
+correlation_matrix_file_name <- paste0(individual, "_fold_change_wide.out_SCC_correlation.wide.out")
+correlation_matrix_file <- file.path("rm_mbr_individual_pep_scc", correlation_matrix_file_name)
+readin_correlation_matrix <- fread(correlation_matrix_file, sep = "\t")
+correlation_matrix <- as.matrix(readin_correlation_matrix[,-1])
+rownames(correlation_matrix) <- readin_correlation_matrix$V1
+nrow(correlation_matrix)
+
+```
+
+
+The abundance correlations between `r nrow(correlation_matrix)` peptides from the individual `r individual` were calculated.
+
+
+### Readin peptide taxonomic annotations
+```{r, echo = FALSE, eval = TRUE}
+### Read in peptide taxonomic annotations
+pep_prot_source_file_name <- paste0(individual, "_rm_mbr_quantified_peptides_refined_anno.out")
+pep_prot_source_file <- file.path("rm_mbr_individual_pep_taxa_refine", pep_prot_source_file_name)
+pep_prot_source <- read.table(pep_prot_source_file, header = TRUE, sep = "\t")
+head(pep_prot_source, 5)
+
+
+```
+
+
+### Selecting peptides from specific family
+```{r, echo = FALSE, eval = TRUE}
+# "Bacteroidaceae" Family
+# selected_family <- "Bacteroidaceae"
+# GenomeA <- "MGYG000002281"
+# GenomeB <- "MGYG000000243"
+
+# "Enterobacteriaceae" Family
+# selected_family <- "Enterobacteriaceae"
+# GenomeA <- "MGYG000002506"
+# GenomeB <- "MGYG000002494"
+
+# "Lachnospiraceae" Family
+# selected_family <- "Lachnospiraceae"
+# GenomeA <- "MGYG000002528"
+# GenomeB <- "MGYG000000212"
+
+# "Eggerthellaceae" Family
+# selected_family <- "Eggerthellaceae"
+# GenomeA <- "MGYG000002544"
+# GenomeB <- "MGYG000002487"
+
+# "Burkholderiaceae" Family
+selected_family <- "Burkholderiaceae"
+GenomeA <- "MGYG000001294"
+GenomeB <- "MGYG000003022"
+
+### Selecting peptides from the specific family
+# Define a filter to only keep genome with larger number of distinct peptides than the threshold
+genome_pep_thresholds <- 10
+
+# Get peptide list of selected family
+selected_family_pep <- pep_prot_source %>% filter(Family == selected_family) %>% select("Peptide") %>% pull()
+length(selected_family_pep)
+
+selected_family_correlation_matrix <- correlation_matrix[rownames(correlation_matrix) %in% selected_family_pep, colnames(correlation_matrix) %in% selected_family_pep ]
+
+# Statistics for the number of peptides from each genome
+selected_pep_prot_source <- pep_prot_source %>% filter(Family == selected_family)
+nrow(selected_pep_prot_source)
+
+# Only keeping peptides from genomes with >= 10 distinct peptides
+genome_pep_counts <- table(selected_pep_prot_source$Genome)
+genomes_to_keep <- names(genome_pep_counts[genome_pep_counts >= genome_pep_thresholds])
+selected_pep_prot_source <- selected_pep_prot_source %>% 
+  filter(Genome %in% genomes_to_keep)
+head(selected_pep_prot_source,5)
+
+# Selecting these peptides from the matrix
+selected_genome_pep <- selected_pep_prot_source %>% select("Peptide") %>% pull()
+length(selected_genome_pep)
+nrow(selected_family_correlation_matrix)
+ncol(selected_family_correlation_matrix)
+selected_genome_correlation_matrix <- selected_family_correlation_matrix[rownames(selected_family_correlation_matrix) %in% selected_genome_pep, colnames(selected_family_correlation_matrix) %in% selected_genome_pep]  
+
+
+```
+
+
+Currently, we are analyzing the family `r selected_family`.
+
+
+### Extract training dataset
+```{r, echo = FALSE, eval = TRUE}
+selecting_percentage <- 0.7
+### Randomly select 70% of peptides from each genome for training
+set.seed(123)
+# Extract training peptides from Genome A
+GenomeA_all_pep <- selected_pep_prot_source %>% 
+  filter(Genome == GenomeA) %>% 
+  filter(Peptide %in% rownames(selected_family_correlation_matrix)) %>% 
+  select("Peptide") %>% 
+  pull()
+train_size <- floor(selecting_percentage * length(GenomeA_all_pep))
+GenomeA_train_pep <- sample(GenomeA_all_pep, size = train_size)
+GenomeA_test_pep <- setdiff(GenomeA_all_pep, GenomeA_train_pep)
+
+# Extract training peptides from Genome B
+set.seed(123)
+GenomeB_all_pep <- selected_pep_prot_source %>% 
+  filter(Genome == GenomeB) %>% 
+  filter(Peptide %in% rownames(selected_family_correlation_matrix)) %>% 
+  select("Peptide") %>% 
+  pull()
+train_size <- floor(selecting_percentage * length(GenomeB_all_pep))
+GenomeB_train_pep <- sample(GenomeB_all_pep, size = train_size)
+GenomeB_test_pep <- setdiff(GenomeB_all_pep, GenomeB_train_pep)
+
+### Prepare training data
+all_train_pep <- c(GenomeA_train_pep, GenomeB_train_pep)
+# Annotate training peptides
+GenomeA_train_pep_anno <- data.frame(
+  Peptide = GenomeA_train_pep,
+  Genome = "GenomeA"
+)
+GenomeB_train_pep_anno <- data.frame(
+  Peptide = GenomeB_train_pep,
+  Genome = "GenomeB"
+)
+all_train_pep_anno <- rbind(GenomeA_train_pep_anno, GenomeB_train_pep_anno)
+all_test_pep_anno <- rbind(GenomeA_test_pep, GenomeB_test_pep)
+
+### Extract features for training and testing
+train_features <- selected_family_correlation_matrix[all_train_pep, all_train_pep]
+train_features_A <- selected_family_correlation_matrix[GenomeA_train_pep, all_train_pep]
+train_features_B <- selected_family_correlation_matrix[GenomeB_train_pep, all_train_pep]
+
+### Prepare final training dataset
+train_features_df <- as.data.frame(train_features)
+train_features_df$Peptide <- rownames(train_features_df)
+train_data <- train_features_df %>%
+  inner_join(all_train_pep_anno, by = "Peptide")
+# Remove Peptide column and convert Genome to factor
+train_data <- train_data %>% select(-Peptide)
+train_data$Genome <- as.factor(train_data$Genome)
+```
+
+
+
+### Extract testing dataset.
+```{r, echo = FALSE, eval = TRUE}
+### Select test dataset 
+# Testing dataset from GenomeA
+GenomeA_test_pep <- setdiff(GenomeA_all_pep, GenomeA_train_pep)
+# Testing dataset from GenomeB
+GenomeB_test_pep <- setdiff(GenomeB_all_pep, GenomeB_train_pep)
+
+test_features_A <- selected_family_correlation_matrix[GenomeA_test_pep, all_train_pep]
+test_features_B <- selected_family_correlation_matrix[GenomeB_test_pep, all_train_pep]
+
+
+### Select genome unannotated peptides
+unannotated_pep <- selected_pep_prot_source %>% 
+  filter(Genome == "-") %>% 
+  filter(Peptide %in% rownames(selected_family_correlation_matrix)) %>% 
+  select("Peptide") %>% 
+  pull()
+# Features of unannotated peptides
+unannotated_features <- selected_family_correlation_matrix[unannotated_pep, all_train_pep]
+
+
+### Select peptides annotated to other genomes from the same family
+other_pep <- selected_pep_prot_source %>% 
+  filter(Genome %in% genomes_to_keep) %>% 
+  filter(Genome != "-" & Genome != GenomeA & Genome != GenomeB) %>% 
+  filter(Peptide %in% rownames(selected_family_correlation_matrix)) %>% 
+  select("Peptide") %>% 
+  pull()
+# Features of peptides annotated to other genomes
+other_genomes_features <- selected_family_correlation_matrix[other_pep, all_train_pep]
+
+
+### Select peptides annotated to other families
+# Get all peptide row names from correlation matrix
+all_peptides <- rownames(correlation_matrix)
+# Get candidate peptides by removing selected family peptides
+candidate_peptides <- setdiff(all_peptides, selected_family_pep)
+# Randomly select 500 peptides not in selected family
+set.seed(123)  # Set random seed for reproducibility
+random_pep <- sample(candidate_peptides, 500)
+# Extract testing features for peptides from other families
+other_family_test_feature <- correlation_matrix[random_pep, all_train_pep]
+```
+
+
+
+### Training the SVM model.
+```{r, echo = FALSE, eval = TRUE}
+### Training Model
+library(e1071)
+model <- svm(Genome ~ ., data = train_data, kernel = "linear", probability = TRUE)
+# Check the trained model
+summary(model)
+
+# Define cross-validation control parameters
+# train_control <- trainControl(method="cv", number=5, classProbs=TRUE, summaryFunction=twoClassSummary)
+# 
+# Train model using random forest and calculate Cross Validation AUC
+# model <- train(Genome ~ ., data=train_data, method="svmLinear", trControl=train_control, metric="ROC")
+# 
+# Print model cross-validation results, including AUC
+# print(model)
+```
+
+
+
+### Evaluate the SVM model with peptides from other families
+```{r, echo = FALSE, eval = TRUE}
+### Combined Set1: Test set for Genome A and Genome B as well as peptides from other families
+combined_other_fam_test_pep <- c(GenomeA_test_pep, GenomeB_test_pep, random_pep)
+combined_other_fam_test_features <- correlation_matrix[combined_other_fam_test_pep, all_train_pep]
+# Setting true labels
+true_labels <- c(
+  rep("GenomeA peptides", length(GenomeA_test_pep)),
+  rep("GenomeB peptides", length(GenomeB_test_pep)),
+  rep("Other peptides", length(random_pep))
+)
+
+# Evaluate for combined dataset with peptides from other families
+pred_svm <- predict(model, as.data.frame(combined_other_fam_test_features), probability = TRUE)
+pred_svm_prob <- attr(pred_svm, "probabilities")[, "GenomeA"]
+# Assign labels based on probability
+pred_labels_svm <- ifelse(
+  pred_svm_prob >= 0.9, "GenomeA peptides",
+  ifelse(pred_svm_prob <= 0.1, "GenomeB peptides", "Other peptides")
+)
+
+# Construct a dataframe for saving predict and real labels
+results_df <- data.frame(
+  Peptide = combined_other_fam_test_pep,
+  TrueLabel = true_labels,
+  PredictedLabel = pred_labels_svm,
+  PredictedProbability = pred_svm_prob
+)
+
+# Setting levels and factors
+levels <- c("GenomeA peptides", "GenomeB peptides", "Other peptides")
+results_df$TrueLabel <- factor(results_df$TrueLabel, levels = levels)
+results_df$PredictedLabel <- factor(results_df$PredictedLabel, levels = levels)
+
+# 7. Calculate confusion matrix
+library(caret)
+conf_matrix <- confusionMatrix(results_df$PredictedLabel, results_df$TrueLabel)
+
+# 8. View confusion matrix
+print(conf_matrix$table)
+
+# 9. Extract evaluation metrics for each class
+metrics_by_class <- as.data.frame(conf_matrix$byClass)
+metrics_by_class$Class <- rownames(metrics_by_class)
+
+# 10. View Precision, Recall, Specificity for each class
+print(metrics_by_class[, c("Class", "Precision", "Recall", "Specificity")])
+
+# 11. Visualize results (optional)
+library(ggplot2)
+
+# Plot confusion matrix heatmap
+conf_mat_df <- as.data.frame(conf_matrix$table)
+ggplot(data = conf_mat_df, aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white", size = 6) +
+  scale_fill_gradient(low = "blue", high = "red") +
+  labs(title = "Confusion Matrix for peptides from other families", x = "Predicted Label", y = "True Label", size = 6)
+```
+
+
+### Evaluate the SVM model with peptides from other genomes of the same family
+```{r, echo = FALSE, eval = TRUE}
+### Combined Set2: Test set for Genome A and Genome B as well as same number of peptides from other genomes
+combined_same_fam_test_pep <- c(GenomeA_test_pep, GenomeB_test_pep, other_pep)
+combined_same_fam_test_features <- correlation_matrix[combined_same_fam_test_pep, all_train_pep]
+
+# Setting true labels
+true_labels <- c(
+  rep("GenomeA peptides", length(GenomeA_test_pep)),
+  rep("GenomeB peptides", length(GenomeB_test_pep)),
+  rep("Other peptides", length(other_pep))
+)
+
+
+pred_svm <- predict(model, as.data.frame(combined_same_fam_test_features), probability = TRUE)
+pred_svm_prob <- attr(pred_svm, "probabilities")[, "GenomeA"]
+# Assign labels based on probability
+pred_labels_svm <- ifelse(
+  pred_svm_prob >= 0.9, "GenomeA peptides",
+  ifelse(pred_svm_prob <= 0.1, "GenomeB peptides", "Other peptides")
+)
+
+# Construct a dataframe for saving predict and real labels
+results_df <- data.frame(
+  Peptide = combined_same_fam_test_pep,
+  TrueLabel = true_labels,
+  PredictedLabel = pred_labels_svm,
+  PredictedProbability = pred_svm_prob
+)
+
+# Setting levels and factors
+levels <- c("GenomeA peptides", "GenomeB peptides", "Other peptides")
+results_df$TrueLabel <- factor(results_df$TrueLabel, levels = levels)
+results_df$PredictedLabel <- factor(results_df$PredictedLabel, levels = levels)
+
+# 7. Calculate confusion matrix
+library(caret)
+conf_matrix <- confusionMatrix(results_df$PredictedLabel, results_df$TrueLabel)
+
+# 8. View confusion matrix
+print(conf_matrix$table)
+
+# 9. Extract evaluation metrics for each class
+metrics_by_class <- as.data.frame(conf_matrix$byClass)
+metrics_by_class$Class <- rownames(metrics_by_class)
+
+# 10. View Precision, Recall, Specificity for each class
+print(metrics_by_class[, c("Class", "Precision", "Recall", "Specificity")])
+
+# 11. Visualize results (optional)
+library(ggplot2)
+
+# Plot confusion matrix heatmap
+conf_mat_df <- as.data.frame(conf_matrix$table)
+ggplot(data = conf_mat_df, aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white", size = 6) +
+  scale_fill_gradient(low = "blue", high = "red") +
+  labs(title = "Confusion Matrix for peptides from the same family", x = "Predicted Label", y = "True Label", size = 6)
+```
+
+
+### Applying SVM model to predict unannotated peptides.
+```{r, echo = FALSE, eval = TRUE}
+pred_svm <- predict(model, as.data.frame(unannotated_features), probability = TRUE)
+pred_svm_prob <- attr(pred_svm, "probabilities")[, "GenomeA"]
+# Assign labels based on probability
+pred_labels_svm <- ifelse(
+  pred_svm_prob >= 0.9, "GenomeA peptides",
+  ifelse(pred_svm_prob <= 0.1, "GenomeB peptides", "Other peptides")
+)
+
+
+# Construct a dataframe for saving predict and real labels
+results_df <- data.frame(
+  Peptide = unannotated_pep,
+  PredictedLabel = pred_labels_svm,
+  PredictedProbability = pred_svm_prob
+)
+
+table(results_df$PredictedLabel)
+
+# Plot the score distribution
+ggplot(results_df, aes(x = PredictedProbability)) +
+  geom_histogram(fill = "#FFBB78FF", position = "identity", bins = 40, alpha = 0.5) +
+  labs(title = "Histogram of Prediction Probabilities", x = "Prediction Probability", y = "Count") +
+  theme_bw() +
+  scale_x_continuous(limits = c(-0.03, 1.03), breaks = seq(0, 1, by = 0.1), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.1))) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 18),
+    axis.title.x = element_text(size = 14, color = "black"),
+    axis.title.y = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    plot.margin = ggplot2::margin(t = 0, r = 15, b = 0, l = 0, unit = "pt")
+  )
+
+```
+
+
+
+### Training the Random Forest (RF) model.
+```{r, echo = FALSE, eval = TRUE}
+### Training the Random Forest model
+library(randomForest)
+model <- randomForest(Genome ~ ., data = train_data, ntree = 500, importance = TRUE)
+
+# Check the trained model
+summary(model)
+```
+
+
+
+### Evaluate the Random Forest (RF) model with peptides from the test dataset.
+```{r}
+### Evaluate the prediction with test dataset
+# Predict on test set
+pred_A_value <- predict(model, as.data.frame(test_features_A), type = "prob")
+pred_B_value <- predict(model, as.data.frame(test_features_B), type = "prob")
+
+
+pred_A_value_df <- as.data.frame(pred_A_value)
+pred_A_value_df$Peptide <- rownames(pred_A_value)
+pred_A_value_df$Genome <- "GenomeA"
+
+pred_B_value_df <- as.data.frame(pred_B_value)
+pred_B_value_df$Peptide <- rownames(pred_B_value)
+pred_B_value_df$Genome <- "GenomeB"
+
+pred_values_df <- rbind(pred_A_value_df, pred_B_value_df)
+
+
+# Histogram plot
+myplot <- ggplot(pred_values_df, aes(x = GenomeA, fill = Genome)) +
+  geom_histogram(position = "identity", bins = 40, alpha = 0.5) +
+  labs(title = "Genome-distinct Peptides in the Testing Dataset", x = "Predicted probability of peptides sourcing from Genome A", y = "Number of peptides") +
+  scale_fill_manual(values = c("GenomeA" = "#D62728FF", "GenomeB" = "#1F77B4FF")) +
+  theme_bw() +
+  scale_x_continuous(limits = c(-0.03, 1.03), breaks = seq(0, 1, by = 0.1), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.1))) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 18),
+    axis.title.x = element_text(size = 14, color = "black"),
+    axis.title.y = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = ggplot2::margin(t = 0, r = 15, b = 0, l = 0, unit = "pt")
+  )
+myplot
+```
+
+
+
+
+
+### Evaluate the Random Forest (RF) model with peptides from other families.
+```{r, echo = FALSE, eval = TRUE}
+### Prediction probabilities of peptides from other families
+other_fam_test_pep <- c(random_pep)
+other_fam_test_features <- correlation_matrix[other_fam_test_pep, all_train_pep]
+
+# Predict and get probabilities for GenomeA
+pred_rf_prob <- predict(model, as.data.frame(other_fam_test_features), type = "prob")[, "GenomeA"]
+
+# Construct a dataframe for saving prediction probabilities
+results_df <- data.frame(
+  Peptide = other_fam_test_pep,
+  PredictedProbability = pred_rf_prob
+)
+
+table(results_df$PredictedLabel)
+
+# Statistics for the number of peptides assigned neither to Genome A nor to Genome B
+filtered_results_df <- results_df %>% filter(PredictedProbability > 0.1 & PredictedProbability < 0.9)
+nrow(filtered_results_df)
+nrow(filtered_results_df)/length(other_fam_test_pep)
+
+# Plot the score distribution
+ggplot(results_df, aes(x = PredictedProbability)) +
+  geom_histogram(fill = "#F4A261", position = "identity", bins = 40, alpha = 0.5) +
+  labs(title = "Peptides from Other Families", x = "Predicted probability of peptides sourcing from Genome A", y = "Number of peptides") +
+  theme_bw() +
+  scale_x_continuous(limits = c(-0.03, 1.03), breaks = seq(0, 1, by = 0.1), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.1))) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 18),
+    axis.title.x = element_text(size = 14, color = "black"),
+    axis.title.y = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    plot.margin = ggplot2::margin(t = 0, r = 15, b = 0, l = 0, unit = "pt")
+  )
+
+
+
+### Confusion Matrix of Combined Set1: Test set for Genome A and Genome B as well as peptides from other families
+# Random Forest Model
+# Predict and get probabilities for test set
+combined_other_fam_test_pep <- c(GenomeA_test_pep, GenomeB_test_pep, random_pep)
+combined_other_fam_test_features <- correlation_matrix[combined_other_fam_test_pep, all_train_pep]
+pred_rf_prob <- predict(model, as.data.frame(combined_other_fam_test_features), type = "prob")[, "GenomeA"]
+
+# Predict and get probabilities for test set
+pred_rf_prob <- predict(model, as.data.frame(combined_other_fam_test_features), type = "prob")[, "GenomeA"]
+
+# Assign labels based on probability
+pred_labels_rf <- ifelse(
+  pred_rf_prob >= 0.9, "GenomeA peptides",
+  ifelse(pred_rf_prob <= 0.1, "GenomeB peptides", "Other peptides")
+)
+
+# Setting true labels
+true_labels <- c(
+  rep("GenomeA peptides", length(GenomeA_test_pep)),
+  rep("GenomeB peptides", length(GenomeB_test_pep)),
+  rep("Other peptides", length(random_pep))
+)
+
+
+# Construct a dataframe for saving predict and real labels
+results_df <- data.frame(
+  Peptide = combined_other_fam_test_pep,
+  TrueLabel = true_labels,
+  PredictedLabel <- pred_labels_rf,
+  PredictedProbability = pred_rf_prob
+)
+
+
+# Setting levels and factors
+levels <- c("GenomeA peptides", "GenomeB peptides", "Other peptides")
+results_df$TrueLabel <- factor(results_df$TrueLabel, levels = levels)
+results_df$PredictedLabel <- factor(results_df$PredictedLabel, levels = levels)
+
+
+# 7. Calculate confusion matrix
+library(caret)
+conf_matrix <- confusionMatrix(results_df$PredictedLabel, results_df$TrueLabel)
+
+# 8. View confusion matrix
+print(conf_matrix$table)
+
+# 9. Extract evaluation metrics for each class
+metrics_by_class <- as.data.frame(conf_matrix$byClass)
+metrics_by_class$Class <- rownames(metrics_by_class)
+
+# 10. View Precision, Recall, Specificity for each class
+print(metrics_by_class[, c("Class", "Precision", "Recall", "Specificity")])
+
+# 11. Visualize results (optional)
+library(ggplot2)
+
+# Plot confusion matrix heatmap
+conf_mat_df <- as.data.frame(conf_matrix$table)
+# ggplot(data = conf_mat_df, aes(x = Prediction, y = Reference, fill = Freq)) +
+#   geom_tile() +
+#   geom_text(aes(label = Freq), color = "white", size = 6) +
+#   scale_fill_gradient(low = "blue", high = "red") +
+#   labs(title = "Confusion Matrix for peptides from the other families", x = "Predicted Label", y = "True Label")
+
+ggplot(data = conf_mat_df, aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white", size = 6, fontface = "bold") +
+  scale_fill_viridis_c(option = "viridis", direction = 1) +
+  labs(title = "Confusion Matrix for Peptides from Other Families", 
+       x = "Predicted Label", 
+       y = "True Label", 
+       fill = "Frequency") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    axis.text.x = element_text(size = 12,  color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    legend.position = "none"            # Set legend position to none
+  )
+
+```
+
+
+
+### Evaluate the Random Forest (RF) model with peptides from other genomes of the same family.
+```{r, echo = FALSE, eval = TRUE}
+### Prediction probabilities of peptides from other families
+same_fam_test_pep <- c(other_pep)
+same_fam_test_features <- correlation_matrix[same_fam_test_pep, all_train_pep]
+
+# Predict and get probabilities for GenomeA
+pred_rf_prob <- predict(model, as.data.frame(same_fam_test_features), type = "prob")[, "GenomeA"]
+
+# Construct a dataframe for saving prediction probabilities
+results_df <- data.frame(
+  Peptide = same_fam_test_pep,
+  PredictedProbability = pred_rf_prob
+)
+
+table(results_df$PredictedLabel)
+
+# Statistics for the number of peptides assigned neither to Genome A nor to Genome B
+filtered_results_df <- results_df %>% filter(PredictedProbability > 0.1 & PredictedProbability < 0.9)
+nrow(filtered_results_df)
+nrow(filtered_results_df)/length(same_fam_test_pep)
+
+# Plot the score distribution
+ggplot(results_df, aes(x = PredictedProbability)) +
+  geom_histogram(fill = "#F4A261", position = "identity", bins = 40, alpha = 0.5) +
+  labs(title = "Peptides from Other Genomes of the same Family", x = "Predicted probability of peptides sourcing from Genome A", y = "Number of peptides") +
+  theme_bw() +
+  scale_x_continuous(limits = c(-0.03, 1.03), breaks = seq(0, 1, by = 0.1), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.1))) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 18),
+    axis.title.x = element_text(size = 14, color = "black"),
+    axis.title.y = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    plot.margin = ggplot2::margin(t = 0, r = 15, b = 0, l = 0, unit = "pt")
+  )
+
+
+
+### Combined Set1: Test set for Genome A and Genome B as well as peptides from other genomes of the same family
+# Random Forest Model
+# Predict and get probabilities for test set
+pred_rf_prob <- predict(model, as.data.frame(combined_same_fam_test_features), type = "prob")[, "GenomeA"]
+
+# Assign labels based on probability
+pred_labels_rf <- ifelse(
+  pred_rf_prob >= 0.9, "GenomeA peptides",
+  ifelse(pred_rf_prob <= 0.1, "GenomeB peptides", "Other peptides")
+)
+
+# Setting true labels
+true_labels <- c(
+  rep("GenomeA peptides", length(GenomeA_test_pep)),
+  rep("GenomeB peptides", length(GenomeB_test_pep)),
+  rep("Other peptides", length(other_pep))
+)
+
+
+# Construct a dataframe for saving predict and real labels
+results_df <- data.frame(
+  Peptide = combined_same_fam_test_pep,
+  TrueLabel = true_labels,
+  PredictedLabel <- pred_labels_rf,
+  PredictedProbability = pred_rf_prob
+)
+
+
+# Setting levels and factors
+levels <- c("GenomeA peptides", "GenomeB peptides", "Other peptides")
+results_df$TrueLabel <- factor(results_df$TrueLabel, levels = levels)
+results_df$PredictedLabel <- factor(results_df$PredictedLabel, levels = levels)
+
+
+# 7. Calculate confusion matrix
+library(caret)
+conf_matrix <- confusionMatrix(results_df$PredictedLabel, results_df$TrueLabel)
+
+# 8. View confusion matrix
+print(conf_matrix$table)
+
+# 9. Extract evaluation metrics for each class
+metrics_by_class <- as.data.frame(conf_matrix$byClass)
+metrics_by_class$Class <- rownames(metrics_by_class)
+
+# 10. View Precision, Recall, Specificity for each class
+print(metrics_by_class[, c("Class", "Precision", "Recall", "Specificity")])
+
+# 11. Visualize results (optional)
+library(ggplot2)
+
+# Plot confusion matrix heatmap
+conf_mat_df <- as.data.frame(conf_matrix$table)
+# ggplot(data = conf_mat_df, aes(x = Prediction, y = Reference, fill = Freq)) +
+#   geom_tile() +
+#   geom_text(aes(label = Freq), color = "white", size = 6) +
+#   scale_fill_gradient(low = "blue", high = "red") +
+#   labs(title = "Confusion Matrix for peptides from the same family", x = "Predicted Label", y = "True Label")
+
+ggplot(data = conf_mat_df, aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white", size = 6, fontface = "bold") +
+  scale_fill_viridis_c(option = "viridis", direction = 1) +
+  labs(title = "Confusion Matrix for Peptides from the Same Family", 
+       x = "Predicted Label", 
+       y = "True Label", 
+       fill = "Frequency") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    axis.text.x = element_text(size = 12,  color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    legend.position = "none"            
+  )
+```
+
+
+### Applying Random Forest (RF) model to predict unannotated peptides.
+```{r, echo = FALSE, eval = TRUE}
+# # Random Forest Model
+# Predict and get probabilities for test set
+pred_rf_prob <- predict(model, as.data.frame(unannotated_features), type = "prob")[, "GenomeA"]
+
+# Assign labels based on probability
+pred_labels_rf <- ifelse(
+  pred_rf_prob >= 0.9, "GenomeA peptides",
+  ifelse(pred_rf_prob <= 0.1, "GenomeB peptides", "Other peptides")
+)
+
+
+# Construct a dataframe for saving predict and real labels
+results_df <- data.frame(
+  Peptide = unannotated_pep,
+  PredictedLabel = pred_labels_rf,
+  PredictedProbability = pred_rf_prob
+)
+
+table(results_df$PredictedLabel)
+
+# Statistics for the number of peptides assigned neither to Genome A nor to Genome B
+filtered_results_df <- results_df %>% filter(PredictedProbability > 0.1 & PredictedProbability < 0.9)
+nrow(filtered_results_df)
+1-nrow(filtered_results_df)/nrow(unannotated_features)
+
+# Plot the score distribution
+ggplot(results_df, aes(x = PredictedProbability)) +
+  geom_histogram(fill = "#F4A261", position = "identity", bins = 40, alpha = 0.5) +
+  labs(title = "Peptides without Genome-level annotation in the Family", x = "Predicted probability of peptides sourcing from Genome A", y = "Number of peptides") +
+  theme_bw() +
+  scale_x_continuous(limits = c(-0.03, 1.03), breaks = seq(0, 1, by = 0.1), expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.1))) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 18),
+    axis.title.x = element_text(size = 14, color = "black"),
+    axis.title.y = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    plot.margin = ggplot2::margin(t = 0, r = 15, b = 0, l = 0, unit = "pt")
+  )
+```
